@@ -491,6 +491,8 @@ select.doc-select.na { background: var(--surface3); color: var(--text3); }
 .quick-action-btn .qa-icon { width: 34px; height: 34px; border-radius: 9px; background: var(--surface3); display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
 .quick-action-btn:hover .qa-icon { background: var(--accent-md); }
 
+.salary-row.muted { opacity: 0.4; }
+
 /* STATUS SELECT DROPDOWN */
 .status-select {
   appearance: none; -webkit-appearance: none;
@@ -808,12 +810,22 @@ const NAV_ITEMS = {
 };
 
 // ===================== INIT =====================
+// ── HARDCODED CONFIG — no setup needed for any user ──
+const DEFAULT_CONFIG = {
+  scriptUrl:   'https://script.google.com/macros/s/AKfycbxVxc4Xdu9iXO5Krs5k43zpvTL733---EdiQoslq3-riyvMwn42NM7tvQDR4LRqoaWJ/exec',
+  companyName: 'HR Central',
+  formTab:     'Form Responses 1',
+  gformUrl:    'https://docs.google.com/forms/d/e/1FAIpQLSfFnh1ulpv1kTEunWx1lqZ_Za-C3b-fjWbQWb4Na4xgxm0rqQ/viewform?usp=preview',
+  sheetId:     '1SESca3WzVkplf6G5f2_Lwn1PJwAZYTb915TqrTYERPM'
+};
+
 function initApp() {
-  APP.scriptUrl = localStorage.getItem('hrc_url') || '';
-  APP.companyName = localStorage.getItem('hrc_co') || 'HR Central';
-  APP.formTab = localStorage.getItem('hrc_ftab') || 'Form Responses 1';
-  APP.gformUrl = localStorage.getItem('hrc_gform') || '';
-  APP.sheetId = localStorage.getItem('hrc_sheetId') || '';
+  // localStorage overrides only if admin has manually changed something
+  APP.scriptUrl   = localStorage.getItem('hrc_url')     || DEFAULT_CONFIG.scriptUrl;
+  APP.companyName = localStorage.getItem('hrc_co')      || DEFAULT_CONFIG.companyName;
+  APP.formTab     = localStorage.getItem('hrc_ftab')    || DEFAULT_CONFIG.formTab;
+  APP.gformUrl    = localStorage.getItem('hrc_gform')   || DEFAULT_CONFIG.gformUrl;
+  APP.sheetId     = localStorage.getItem('hrc_sheetId') || DEFAULT_CONFIG.sheetId;
   APP.g1 = JSON.parse(JSON.stringify(SAMPLE_G1));
   APP.g2 = JSON.parse(JSON.stringify(SAMPLE_G2));
   APP.g3 = JSON.parse(JSON.stringify(SAMPLE_G3));
@@ -1618,7 +1630,12 @@ function loadSalaryData() {
   const sheet=type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
   const emp=sheet.find(e=>e['Enter Employee Code']===code);
   if (!emp) return;
-  const inputs=[['Status','Status','text'],['EPFO No.','EPFO No.','text'],['ESIC No.','ESIC No . (Previous/ Existing)','text'],['Basic ₹','Basic','number'],['HRA ₹','HRA','number'],['Other Allow ₹','other','number'],['Med. Allow ₹','Med. Allow','number'],['Spl Alw ₹','Spl Alw','number'],['Misc Allow ₹','Misc Allow','number'],['Fixed Other ₹','Fixed Other All','number'],['Variable (p.a.) ₹','Variable (p.a.)','number']];
+
+  // Read saved toggles or defaults from employee record
+  const hasPF    = emp['Is PF Deducted']   !== 'No';
+  const hasESIC  = emp['Is ESIC Deducted'] !== 'No';
+  const hasInsur = emp['Has Insurance']    !== 'No';
+
   document.getElementById('salaryFormArea').innerHTML=`
 <div class="card">
   <div class="card-header">
@@ -1629,56 +1646,240 @@ function loadSalaryData() {
     <button class="btn btn-success btn-sm" onclick="savePageSalary('${code}','${type}')">💾 Save to Sheet</button>
   </div>
   <div class="card-body">
-    <div class="section-heading">Salary Components</div>
-    <div class="form-grid">
-      ${inputs.map(([lbl,key,t])=>`<div class="form-group"><label>${lbl}</label>
-        <input class="form-control" id="psal_${key.replace(/[^a-zA-Z0-9]/g,'_')}" type="${t}"
-          value="${emp[key]||''}" ${t==='number'?'oninput="calcPageSalary()"':''} placeholder="${t==='number'?'0':''}"/></div>`).join('')}
+
+    <!-- TOGGLE CONTROLS -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding:14px;background:var(--surface3);border-radius:10px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);width:100%;margin-bottom:4px;">⚙️ Applicable Components</div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_pf" ${hasPF?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        🏦 PF Applicable
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_esic" ${hasESIC?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        🏥 ESIC Applicable
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_insur" ${hasInsur?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        🛡️ Insurance Applicable
+      </label>
     </div>
+
+    <!-- SALARY INPUTS -->
+    <div class="section-heading">Gross Salary Entry</div>
+    <div style="background:var(--accent-lt);border:1.5px solid var(--accent-md);border-radius:10px;padding:14px;margin-bottom:16px;font-size:12px;color:var(--accent-dk);">
+      💡 Enter <strong>Gross Salary</strong> only — all components auto-calculate. Or enter components individually.
+    </div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Gross Salary ₹ <span style="font-size:10px;color:var(--text3);">(auto-splits below)</span></label>
+        <input class="form-control" id="psal_gross_input" type="number" placeholder="e.g. 30000"
+          value="${emp['Monthly (Gross)']||''}" oninput="autoSplitGross()" style="font-size:16px;font-weight:700;border-color:var(--accent);">
+      </div>
+      <div class="form-group">
+        <label>EPFO No.</label>
+        <input class="form-control" id="psal_EPFO_No_" type="text" value="${emp['EPFO No.']||''}" placeholder="EPFO number"/>
+      </div>
+      <div class="form-group">
+        <label>ESIC No.</label>
+        <input class="form-control" id="psal_esic_no" type="text" value="${emp['ESIC No . (Previous/ Existing)']||''}" placeholder="ESIC number"/>
+      </div>
+      <div class="form-group">
+        <label>Incentive ₹ <span style="font-size:10px;color:var(--text3);">(monthly)</span></label>
+        <input class="form-control" id="psal_incentive" type="number" placeholder="0"
+          value="${emp['Incentive']||''}" oninput="calcPageSalary()"/>
+      </div>
+      <div class="form-group">
+        <label>Room Facility ₹ <span style="font-size:10px;color:var(--text3);">(monthly)</span></label>
+        <input class="form-control" id="psal_room" type="number" placeholder="0"
+          value="${emp['Room Facility']||''}" oninput="calcPageSalary()"/>
+      </div>
+    </div>
+
+    <div class="section-heading">Salary Components <span style="font-size:11px;font-weight:400;color:var(--text3);">(auto-filled from Gross, editable)</span></div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Basic ₹ <span style="font-size:10px;color:var(--text3);">50% of Gross</span></label>
+        <input class="form-control" id="psal_Basic" type="number" placeholder="0"
+          value="${emp['Basic']||''}" oninput="calcPageSalary()"/>
+      </div>
+      <div class="form-group">
+        <label>HRA ₹ <span style="font-size:10px;color:var(--text3);">25% of Basic</span></label>
+        <input class="form-control" id="psal_HRA" type="number" placeholder="0"
+          value="${emp['HRA']||''}" oninput="calcPageSalary()"/>
+      </div>
+      <div class="form-group">
+        <label>Special Allowance ₹ <span style="font-size:10px;color:var(--text3);">25% of Basic</span></label>
+        <input class="form-control" id="psal_Spl_Alw" type="number" placeholder="0"
+          value="${emp['Spl Alw']||''}" oninput="calcPageSalary()"/>
+      </div>
+    </div>
+
+    <!-- LIVE CTC BREAKDOWN -->
     <div class="salary-preview" id="pageSalaryPreview">
       <h4>💳 CTC Breakdown</h4>
-      <p style="font-size:12px;color:var(--text3);">Enter amounts above to see live breakdown</p>
+      <p style="font-size:12px;color:var(--text3);">Enter Gross Salary above to see live breakdown</p>
     </div>
   </div>
 </div>`;
-  if (emp.Basic) calcPageSalary();
+
+  if (emp['Monthly (Gross)'] || emp['Basic']) calcPageSalary();
+}
+
+function autoSplitGross() {
+  const gross = parseFloat(document.getElementById('psal_gross_input')?.value)||0;
+  if (!gross) return;
+  const basic = Math.round(gross * 0.50);
+  const hra   = Math.round(basic * 0.25);
+  const spl   = Math.round(basic * 0.25);
+  const setVal = (id, val) => { const el=document.getElementById(id); if(el) el.value=val||''; };
+  setVal('psal_Basic',   basic);
+  setVal('psal_HRA',     hra);
+  setVal('psal_Spl_Alw', spl);
+  calcPageSalary();
 }
 
 function calcPageSalary() {
-  const g=(id)=>parseFloat(document.getElementById(id)?.value)||0;
-  const basic=g('psal_Basic'),hra=g('psal_HRA'),other=g('psal_other'),med=g('psal_Med__Allow'),spl=g('psal_Spl_Alw'),misc=g('psal_Misc_Allow'),fixed=g('psal_Fixed_Other_All');
-  const gross=basic+hra+other+med+spl+misc+fixed;
-  const esiER=gross*0.0325,pfER=basic*0.13,bonus=basic*0.0833,gratuity=basic*0.0481,esiEE=gross*0.0075,pfEE=basic*0.12;
-  const ctcPM=gross+esiER+pfER+500+bonus/12+gratuity/12,ctcPA=ctcPM*12,takeHome=gross-esiEE-pfEE;
-  const fmt=(n)=>`₹${n.toLocaleString('en-IN',{maximumFractionDigits:0})}`;
-  const el=document.getElementById('pageSalaryPreview');
+  const g    = (id) => parseFloat(document.getElementById(id)?.value)||0;
+  const tog  = (id) => document.getElementById(id)?.checked ?? true;
+
+  const basic     = g('psal_Basic');
+  const hra       = g('psal_HRA');
+  const spl       = g('psal_Spl_Alw');
+  const incentive = g('psal_incentive');
+  const room      = g('psal_room');
+  const gross     = basic + hra + spl;
+  const totalGross = gross + incentive + room;
+
+  const pfOn    = tog('tog_pf');
+  const esicOn  = tog('tog_esic');
+  const insurOn = tog('tog_insur');
+
+  // Employer contributions
+  const pfER      = pfOn   ? Math.round(basic * 0.13)   : 0;
+  const esicER    = esicOn ? Math.round(totalGross * 0.0325) : 0;
+  const insurance = insurOn? 500 : 0;
+  const gratuity  = Math.round(basic * 0.0481);          // 4.81%
+  const bonus     = Math.round(basic * 0.0833);          // 8.33%
+
+  // Leave encashment (monthly provisioning)
+  const elMonthly = Math.round((basic/26) * 15 / 12);   // EL 15 days/year
+  const clMonthly = Math.round((basic/26) * 7  / 12);   // CL 7 days/year
+
+  // Employee deductions
+  const pfEE   = pfOn   ? Math.round(basic * 0.12)       : 0;
+  const esicEE = esicOn ? Math.round(totalGross * 0.0075): 0;
+
+  const ctcPM  = totalGross + pfER + esicER + insurance + Math.round(gratuity/12) + Math.round(bonus/12) + elMonthly + clMonthly;
+  const ctcPA  = ctcPM * 12;
+  const takeHome = totalGross - pfEE - esicEE;
+
+  const fmt = (n) => n > 0 ? `₹${Math.round(n).toLocaleString('en-IN')}` : '—';
+  const el  = document.getElementById('pageSalaryPreview');
   if (!el) return;
-  el.innerHTML=`<h4>💳 Live CTC Breakdown</h4>
-    <div class="salary-section-header">Earnings</div>
-    <div class="salary-row"><span>Basic</span><span class="amount">${fmt(basic)}</span></div>
-    <div class="salary-row"><span>HRA + Allowances</span><span class="amount">${fmt(hra+other+med+spl+misc+fixed)}</span></div>
-    <div class="salary-row total"><span>Monthly Gross</span><span class="amount">${fmt(gross)}</span></div>
-    <div class="salary-section-header">Employer Contributions</div>
-    <div class="salary-row"><span>ESI ER (3.25%)</span><span class="amount">${fmt(esiER)}</span></div>
-    <div class="salary-row"><span>PF ER (13%)</span><span class="amount">${fmt(pfER)}</span></div>
-    <div class="salary-row"><span>Insurance</span><span class="amount">₹500</span></div>
-    <div class="salary-row total"><span>CTC per Month</span><span class="amount">${fmt(ctcPM)}</span></div>
-    <div class="salary-row total"><span>CTC per Annum</span><span class="amount">${fmt(ctcPA)}</span></div>
-    <div class="salary-section-header">Employee Deductions</div>
-    <div class="salary-row deduction"><span>ESIC EE (0.75%)</span><span class="amount">−${fmt(esiEE)}</span></div>
-    <div class="salary-row deduction"><span>PF EE (12%)</span><span class="amount">−${fmt(pfEE)}</span></div>
-    <div class="salary-row total" style="background:var(--green-lt);border-radius:8px;padding:10px 12px;margin-top:4px;"><span>🏠 Take Home</span><span class="amount" style="color:var(--green);">${fmt(takeHome)}</span></div>`;
+
+  el.innerHTML=`
+<h4>💳 Live CTC Breakdown</h4>
+
+<div class="salary-section-header">💵 Earnings (Monthly)</div>
+<div class="salary-row"><span>Basic (50% of Gross)</span><span class="amount">${fmt(basic)}</span></div>
+<div class="salary-row"><span>HRA (25% of Basic)</span><span class="amount">${fmt(hra)}</span></div>
+<div class="salary-row"><span>Special Allowance (25% of Basic)</span><span class="amount">${fmt(spl)}</span></div>
+${incentive>0?`<div class="salary-row"><span>Incentive</span><span class="amount">${fmt(incentive)}</span></div>`:''}
+${room>0?`<div class="salary-row"><span>Room Facility</span><span class="amount">${fmt(room)}</span></div>`:''}
+<div class="salary-row total"><span>Monthly Gross</span><span class="amount">${fmt(totalGross)}</span></div>
+
+<div class="salary-section-header">🏢 Employer Contributions</div>
+<div class="salary-row ${pfOn?'':'muted'}"><span>PF Employer (13%)</span><span class="amount">${pfOn?fmt(pfER):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row ${esicOn?'':'muted'}"><span>ESIC Employer (3.25%)</span><span class="amount">${esicOn?fmt(esicER):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row ${insurOn?'':'muted'}"><span>Insurance Cost</span><span class="amount">${insurOn?fmt(insurance):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row"><span>Gratuity @ 4.81% (monthly)</span><span class="amount">${fmt(Math.round(gratuity/12))}</span></div>
+<div class="salary-row"><span>Bonus @ 8.33% (monthly)</span><span class="amount">${fmt(Math.round(bonus/12))}</span></div>
+<div class="salary-row"><span>EL — 15 Days (monthly)</span><span class="amount">${fmt(elMonthly)}</span></div>
+<div class="salary-row"><span>CL — 7 Days (monthly)</span><span class="amount">${fmt(clMonthly)}</span></div>
+<div class="salary-row total" style="background:var(--accent-lt);"><span>💼 CTC per Month</span><span class="amount" style="color:var(--accent);">${fmt(ctcPM)}</span></div>
+<div class="salary-row total" style="background:var(--accent-lt);"><span>📅 CTC per Annum</span><span class="amount" style="color:var(--accent);">${fmt(ctcPA)}</span></div>
+
+<div class="salary-section-header">✂️ Employee Deductions</div>
+<div class="salary-row deduction ${pfOn?'':'muted'}"><span>PF Employee (12%)</span><span class="amount">${pfOn?'−'+fmt(pfEE):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row deduction ${esicOn?'':'muted'}"><span>ESIC Employee (0.75%)</span><span class="amount">${esicOn?'−'+fmt(esicEE):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+
+<div class="salary-row total" style="background:var(--green-lt);border-radius:8px;padding:12px;margin-top:6px;">
+  <span>🏠 Take Home Salary</span>
+  <span class="amount" style="color:var(--green);font-size:16px;">${fmt(takeHome)}</span>
+</div>`;
+
+  // Sync gross input if components were manually changed
+  const grossInputEl = document.getElementById('psal_gross_input');
+  if (grossInputEl && !document.activeElement?.id?.includes('gross_input')) {
+    grossInputEl.value = totalGross || '';
+  }
 }
 
 async function savePageSalary(code,type) {
-  const g=(id)=>parseFloat(document.getElementById(id)?.value)||0;
-  const basic=g('psal_Basic'),hra=g('psal_HRA'),other=g('psal_other'),med=g('psal_Med__Allow'),spl=g('psal_Spl_Alw'),misc=g('psal_Misc_Allow'),fixed=g('psal_Fixed_Other_All');
-  const gross=basic+hra+other+med+spl+misc+fixed;
-  const sheet=type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
-  const emp=sheet.find(e=>e['Enter Employee Code']===code);
-  if (emp) { emp.Basic=basic;emp.HRA=hra;emp.other=other;emp['Med. Allow']=med;emp['Spl Alw']=spl;emp['Misc Allow']=misc;emp['Fixed Other All']=fixed;emp['Monthly (Gross)']=gross; }
-  if (APP.scriptUrl) { try { await postToScript({action:'saveSalary',empCode:code,type,basic,hra,gross}); } catch(e) {} }
-  toast(`Salary saved for ${emp?.Name}`,'success');
+  const g    = (id) => parseFloat(document.getElementById(id)?.value)||0;
+  const gs   = (id) => document.getElementById(id)?.value||'';
+  const tog  = (id) => document.getElementById(id)?.checked ?? true;
+
+  const basic     = g('psal_Basic');
+  const hra       = g('psal_HRA');
+  const spl       = g('psal_Spl_Alw');
+  const incentive = g('psal_incentive');
+  const room      = g('psal_room');
+  const gross     = basic + hra + spl;
+  const totalGross= gross + incentive + room;
+
+  const pfOn    = tog('tog_pf');
+  const esicOn  = tog('tog_esic');
+  const insurOn = tog('tog_insur');
+
+  const pfER      = pfOn   ? Math.round(basic * 0.13)       : 0;
+  const esicER    = esicOn ? Math.round(totalGross * 0.0325) : 0;
+  const insurance = insurOn? 500 : 0;
+  const gratuity  = Math.round(basic * 0.0481);
+  const bonus     = Math.round(basic * 0.0833);
+  const elMonthly = Math.round((basic/26)*15/12);
+  const clMonthly = Math.round((basic/26)*7/12);
+  const pfEE      = pfOn   ? Math.round(basic * 0.12)        : 0;
+  const esicEE    = esicOn ? Math.round(totalGross * 0.0075) : 0;
+  const ctcPM     = totalGross + pfER + esicER + insurance + Math.round(gratuity/12) + Math.round(bonus/12) + elMonthly + clMonthly;
+  const ctcPA     = ctcPM * 12;
+  const takeHome  = totalGross - pfEE - esicEE;
+
+  const sheet = type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
+  const emp   = sheet.find(e=>e['Enter Employee Code']===code);
+  if (emp) {
+    emp['Basic']=basic; emp['HRA']=hra; emp['Spl Alw']=spl;
+    emp['Monthly (Gross)']=totalGross; emp['Incentive']=incentive;
+    emp['Room Facility']=room;
+    emp['ESI (Employers Contribution)-3.25%']=esicER;
+    emp['PF (Employers Contribution)-13%']=pfER;
+    emp['INSURANCE']=insurance;
+    emp['Bonus']=Math.round(bonus/12); emp['Gratutity']=Math.round(gratuity/12);
+    emp['PL']=elMonthly; emp['cl']=clMonthly;
+    emp['CTC (p.m.)']=ctcPM; emp['CTC (p.a.)']=ctcPA;
+    emp['ESIC (Employee Deduction)-0.75%']=esicEE;
+    emp['PF Deduction (Employee Deduction)-12%']=pfEE;
+    emp['Take Home Salary']=takeHome;
+    emp['EPFO No.']=gs('psal_EPFO_No_');
+    emp['ESIC No . (Previous/ Existing)']=gs('psal_esic_no');
+    emp['Is PF Deducted']=pfOn?'Yes':'No';
+    emp['Is ESIC Deducted']=esicOn?'Yes':'No';
+    emp['Has Insurance']=insurOn?'Yes':'No';
+  }
+  if (APP.scriptUrl) {
+    try {
+      await postToScript({
+        action:'saveSalary', empCode:code, type,
+        basic, hra, spl, gross:totalGross, incentive, room,
+        esiER:esicER, pfER, insurance, gratuity:Math.round(gratuity/12),
+        bonus:Math.round(bonus/12), pl:elMonthly, cl:clMonthly,
+        ctcPM, ctcPA, esiEE:esicEE, pfEE, takeHome,
+        epfoNo:gs('psal_EPFO_No_'), esicNo:gs('psal_esic_no'),
+        isPF:pfOn?'Yes':'No', isESIC:esicOn?'Yes':'No', hasInsurance:insurOn?'Yes':'No'
+      });
+    } catch(e) {}
+  }
+  toast(`✅ Salary saved for ${emp?.Name}`,'success');
 }
 
 // ===================== DOCUMENT TRACKING =====================
