@@ -688,9 +688,35 @@ let APP = {
 function fmtDate(val) {
   if (!val) return '—';
   val = String(val).trim();
+  // Already DD-MM-YYYY
   if (/^\d{2}-\d{2}-\d{4}$/.test(val)) return val;
+  // DD/MM/YYYY → DD-MM-YYYY
   if (/^\d{2}\/\d{2}\/\d{4}$/.test(val)) return val.replace(/\//g, '-');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) { const [y,m,d]=val.split('-'); return `${d}-${m}-${y}`; }
+  // YYYY-MM-DD → DD-MM-YYYY
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) { const [y,m,d]=val.split('-'); return d+'-'+m+'-'+y; }
+  // Google Sheets serial number (number > 1000)
+  if (/^\d+$/.test(val) && parseInt(val) > 1000) {
+    const d = new Date(Math.round((parseInt(val) - 25569) * 86400 * 1000));
+    const dd=String(d.getUTCDate()).padStart(2,'0'), mm=String(d.getUTCMonth()+1).padStart(2,'0'), yyyy=d.getUTCFullYear();
+    return dd+'-'+mm+'-'+yyyy;
+  }
+  // Try parsing any other date string
+  const parsed = new Date(val);
+  if (!isNaN(parsed.getTime())) {
+    const dd=String(parsed.getDate()).padStart(2,'0'), mm=String(parsed.getMonth()+1).padStart(2,'0');
+    return dd+'-'+mm+'-'+parsed.getFullYear();
+  }
+  return val;
+}
+
+function fmtDateTime(val) {
+  if (!val) return '—';
+  val = String(val).trim();
+  // Format: "27/12/2025 16:42:41" → "27-12-2025 16:42"
+  const m = val.match(/^(\d{2})[\/\-](\d{2})[\/\-](\d{4})\s+(\d{2}:\d{2})/);
+  if (m) return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4];
+  // Already good format
+  if (/^\d{2}-\d{2}-\d{4} \d{2}:\d{2}/.test(val)) return val;
   return val;
 }
 
@@ -1128,6 +1154,7 @@ function renderFormInbox() {
     <div style="font-size:12px;opacity:0.8;margin-top:3px;">Review applications submitted via the Google Form onboarding link</div>
   </div>
   <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.3);" onclick="fetchAllData()">🔄 Refresh</button>
+  ${counts.pending > 1 ? '<button class="btn btn-sm" style="background:#f59e0b;color:white;border-color:#d97706;" onclick="openBulkApproveModal()">⚡ Bulk Approve ('+counts.pending+' pending)</button>' : ''}
 </div>
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
   <div style="background:var(--white);border:1.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('all',this)">
@@ -1163,31 +1190,79 @@ function renderInboxTable(filter) {
   if (!items.length) {
     return '<div class="empty-state" style="padding:40px;"><div class="empty-icon">📭</div><h3>No submissions</h3><p style="color:var(--text3);">No ' + (filter==='all'?'':filter+' ') + 'form submissions found.</p></div>';
   }
+
+  function linkCell(val) {
+    if (!val) return '—';
+    const v = String(val).trim();
+    if (v.startsWith('http')) return '<a href="'+v+'" target="_blank" style="color:var(--blue);font-size:11px;text-decoration:underline;">🔗 View File</a>';
+    return v;
+  }
+
   const rows = items.map(function(f) {
     const statusClass = f.status==='pending' ? 'badge-yellow' : f.status==='approved' ? 'badge-green' : 'badge-red';
     const statusLabel = f.status==='pending' ? '⏳ Pending' : f.status==='approved' ? '✅ Approved' : '❌ Rejected';
-    const rowBg = f.status==='pending' ? 'background:var(--yellow-lt);' : f.status==='rejected' ? 'background:var(--red-lt);opacity:0.8;' : '';
+    const rowBg = f.status==='pending' ? '' : f.status==='rejected' ? 'opacity:0.8;background:var(--red-lt);' : 'background:var(--green-lt);';
     const actionBtn = f.status==='pending'
       ? '<button class="btn btn-primary btn-sm" onclick="openApproveModal(\''+f.id+'\')">📋 Review →</button>'
-      : (f.empCode ? '<span class="badge badge-teal font-mono" style="font-size:11px;">'+f.empCode+'</span>' : '<span style="color:var(--text4);font-size:12px;">—</span>');
-    return '<tr style="'+rowBg+'">' +
-      '<td style="font-weight:600;color:var(--text);">' + f.Name + '</td>' +
-      '<td style="font-size:12px;color:var(--text2);">' + (f.Email||'—') + '</td>' +
-      '<td style="font-size:12px;color:var(--text3);">' + (f['Contact Number']||'—') + '</td>' +
-      '<td style="font-size:12px;color:var(--text2);">' + (f['Last qualification Certificate']||'—') + '</td>' +
-      '<td style="font-size:12px;color:var(--text3);font-family:var(--mono);">' + (f.Timestamp||'—') + '</td>' +
-      '<td><span class="badge ' + statusClass + '">' + statusLabel + '</span>' +
-        (f.rejectReason ? '<div style="font-size:10px;color:var(--red);margin-top:3px;">'+f.rejectReason+'</div>' : '') + '</td>' +
-      '<td>' + actionBtn + '</td>' +
+      : (f.empCode ? '<span class="badge badge-teal font-mono" style="font-size:11px;">'+f.empCode+'</span>' : '—');
+    return '<tr style="'+rowBg+'vertical-align:top;">' +
+      '<td style="font-weight:700;color:var(--text);white-space:nowrap;">'+fmtDateTime(f.Timestamp||'')+'</td>' +
+      '<td style="font-weight:600;color:var(--text);white-space:nowrap;">'+(f.Name||'—')+'</td>' +
+      '<td style="font-size:12px;color:var(--text2);">'+(f["Father's Name"]||'—')+'</td>' +
+      '<td style="font-size:12px;white-space:nowrap;">'+fmtDate(f["Date of Birth"]||'')+'</td>' +
+      '<td style="font-size:12px;white-space:nowrap;">'+fmtDate(f["Date of Joining"]||'')+'</td>' +
+      '<td style="font-size:12px;">'+(f.Gender||'—')+'</td>' +
+      '<td style="font-size:12px;">'+(f["Marital Status"]||'—')+'</td>' +
+      '<td style="font-size:12px;font-family:var(--mono);">'+(f["Contact Number"]||'—')+'</td>' +
+      '<td style="font-size:12px;color:var(--blue);">'+(f.Email?'<a href="mailto:'+f.Email+'" style="color:var(--blue);">'+f.Email+'</a>':'—')+'</td>' +
+      '<td style="font-size:12px;font-family:var(--mono);">'+(f["Adhar card Number"]||'—')+'</td>' +
+      '<td>'+linkCell(f["Upload adhar Card"]||f["Upload Adhar Card"]||'')+'</td>' +
+      '<td style="font-size:12px;font-family:var(--mono);">'+(f["Pan Number"]||'—')+'</td>' +
+      '<td>'+linkCell(f["Upload Pan"]||'')+'</td>' +
+      '<td style="font-size:12px;">'+(f["Bank Name"]||'—')+'</td>' +
+      '<td style="font-size:12px;font-family:var(--mono);">'+(f["Bank Account Number"]||'—')+'</td>' +
+      '<td style="font-size:12px;font-family:var(--mono);">'+(f["IFSC Code"]||'—')+'</td>' +
+      '<td>'+linkCell(f["Cheque"]||f["Upload Cheque"]||'')+'</td>' +
+      '<td style="font-size:12px;">'+(f["Last qualification Certificate"]||'—')+'</td>' +
+      '<td>'+linkCell(f["Upload Offer Letter"]||f["Upload Offer letter"]||'')+'</td>' +
+      '<td style="font-size:12px;">'+(f["Blood Group"]||'—')+'</td>' +
+      '<td style="font-size:12px;font-family:var(--mono);">'+(f["Emergency Contact Number"]||'—')+'</td>' +
+      '<td style="font-size:12px;">'+(f["Emergency contact person Name"]||'—')+'</td>' +
+      '<td style="font-size:12px;">'+(f["Relation with Employee."]||f["Relation with Employee"]||'—')+'</td>' +
+      '<td style="font-size:12px;text-align:center;">'+(f["Is PF Deducted"]||'—')+'</td>' +
+      '<td style="font-size:12px;text-align:center;">'+(f["Is ESIC Deducted"]||'—')+'</td>' +
+      '<td><span class="badge '+statusClass+'">'+statusLabel+'</span>'+(f.rejectReason?'<div style="font-size:10px;color:var(--red);margin-top:3px;">'+f.rejectReason+'</div>':'')+'</td>' +
+      '<td>'+actionBtn+'</td>' +
       '</tr>';
   }).join('');
-  return '<div class="table-wrap"><table>' +
-    '<thead><tr>' +
-    '<th>Applicant Name</th>' +
-    '<th>Email</th>' +
+
+  return '<div style="overflow-x:auto;"><table style="min-width:1800px;font-size:12px;">' +
+    '<thead><tr style="position:sticky;top:0;background:var(--surface2);z-index:2;">' +
+    '<th style="white-space:nowrap;">Timestamp</th>' +
+    '<th style="white-space:nowrap;">Name</th>' +
+    "<th style=\"white-space:nowrap;\">Father's Name</th>" +
+    '<th style="white-space:nowrap;">Date of Birth</th>' +
+    '<th style="white-space:nowrap;">Date of Joining</th>' +
+    '<th>Gender</th>' +
+    '<th style="white-space:nowrap;">Marital Status</th>' +
     '<th>Contact</th>' +
+    '<th>Email</th>' +
+    '<th>Aadhar No.</th>' +
+    '<th>Aadhar File</th>' +
+    '<th>PAN No.</th>' +
+    '<th>PAN File</th>' +
+    '<th>Bank Name</th>' +
+    '<th>Account No.</th>' +
+    '<th>IFSC</th>' +
+    '<th>Cheque</th>' +
     '<th>Qualification</th>' +
-    '<th>Submitted On</th>' +
+    '<th>Offer Letter</th>' +
+    '<th>Blood Grp</th>' +
+    '<th style="white-space:nowrap;">Emergency Contact</th>' +
+    '<th style="white-space:nowrap;">Emergency Person</th>' +
+    '<th>Relation</th>' +
+    '<th>PF</th>' +
+    '<th>ESIC</th>' +
     '<th>Status</th>' +
     '<th>Action</th>' +
     '</tr></thead>' +
@@ -1205,75 +1280,148 @@ function filterInbox(filter, btn) {
 function openApproveModal(formId) {
   const f = APP.formInbox.find(x=>x.id===formId);
   if (!f) return;
-  const depts = ['Technology','Human Resources','Finance','Sales','Operations','Marketing','Legal','Admin'];
-  document.getElementById('approveModalBody').innerHTML = `
-<div class="section-heading">Submitted Information</div>
-<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:20px;">
-  <div class="form-grid">
-    ${[['Full Name',f.Name],['Father\'s Name',f["Father's Name"]],['Date of Birth',fmtDate(f["Date of Birth"])],
-       ['Date of Joining',fmtDate(f["Date of Joining"])],['Gender',f.Gender],['Marital Status',f["Marital Status"]],
-       ['Contact Number',f["Contact Number"]],['Email',f.Email],['Aadhar Number',f["Adhar card Number"]],
-       ['PAN Number',f["Pan Number"]],['Bank Name',f["Bank Name"]],['Account Number',f["Bank Account Number"]],
-       ['IFSC Code',f["IFSC Code"]],['Qualification',f["Last qualification Certificate"]],
-       ['Blood Group',f["Blood Group"]||'—'],['PF Deducted',f["Is PF Deducted"]],['ESIC Deducted',f["Is ESIC Deducted"]]]
-    .map(([l,v])=>`<div class="form-group"><label>${l}</label><input class="form-control read-only-field" value="${v||'—'}" readonly/></div>`).join('')}
-  </div>
-</div>
-<div class="section-heading">HR Assignment — Fill & Approve</div>
-<div class="form-grid">
-  <div class="form-group"><label>Employee Code *</label><input class="form-control" id="approveEmpCode" placeholder="e.g. G1-015"/></div>
-  <div class="form-group"><label>Employee Type *</label>
-    <select class="form-control" id="approveEmpType">
-      <option value="">Select type</option>
-      <option value="G1">G1 — Permanent</option>
-      <option value="G2">G2 — Contract</option>
-      <option value="G3">G3 — Trainee</option>
-    </select></div>
-  <div class="form-group"><label>Department *</label>
-    <select class="form-control" id="approveDept">
-      <option value="">Select department</option>
-      ${depts.map(d=>`<option>${d}</option>`).join('')}
-    </select></div>
-  <div class="form-group"><label>Designation *</label><input class="form-control" id="approveDesig" placeholder="e.g. Software Engineer"/></div>
-  <div class="form-group form-full"><label>Reporting Supervisor *</label><input class="form-control" id="approveReporting" placeholder="Supervisor name"/></div>
-</div>
-<div style="display:flex;gap:10px;margin-top:20px;">
-  <button class="btn btn-success" onclick="approveFormSubmission('${formId}')">✅ Approve & Add to Database</button>
-  <button class="btn btn-danger" onclick="rejectFormSubmission('${formId}')">❌ Reject</button>
-  <button class="btn btn-ghost" onclick="closeModal('approveModal')">Cancel</button>
-</div>`;
+
+  function linkField(label, val) {
+    if (!val) return '<div class="form-group"><label>'+label+'</label><input class="form-control read-only-field" value="—" readonly/></div>';
+    const v = String(val).trim();
+    if (v.startsWith('http')) {
+      return '<div class="form-group"><label>'+label+'</label>' +
+        '<a href="'+v+'" target="_blank" class="btn btn-secondary btn-sm" style="display:inline-flex;align-items:center;gap:6px;margin-top:2px;">🔗 View File</a></div>';
+    }
+    return '<div class="form-group"><label>'+label+'</label><input class="form-control read-only-field" value="'+v+'" readonly/></div>';
+  }
+
+  function roField(label, val) {
+    return '<div class="form-group"><label>'+label+'</label><input class="form-control read-only-field" value="'+(val||'—')+'" readonly/></div>';
+  }
+
+  const existingDepts = [...new Set([...APP.g1,...APP.g2,...APP.g3].map(e=>e.Department).filter(Boolean))];
+  const defaultDepts = ['Technology','Human Resources','Finance','Sales','Operations','Marketing','Legal','Admin','Office'];
+  const allDepts = [...new Set([...defaultDepts,...existingDepts])].sort();
+
+  document.getElementById('approveModalBody').innerHTML =
+    '<div class="section-heading">📋 Submitted Application Details</div>' +
+    '<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:20px;max-height:340px;overflow-y:auto;">' +
+      '<div class="form-grid">' +
+        roField('Full Name', f.Name) +
+        roField("Father's Name", f["Father's Name"]) +
+        roField('Date of Birth', fmtDate(f["Date of Birth"])) +
+        roField('Date of Joining', fmtDate(f["Date of Joining"])) +
+        roField('Gender', f.Gender) +
+        roField('Marital Status', f["Marital Status"]) +
+        roField('Contact Number', f["Contact Number"]) +
+        roField('Email', f.Email) +
+        roField('Aadhar Number', f["Adhar card Number"]) +
+        linkField('Aadhar Card Upload', f["Upload adhar Card"]||f["Upload Adhar Card"]) +
+        roField('PAN Number', f["Pan Number"]) +
+        linkField('PAN Upload', f["Upload Pan"]) +
+        roField('Bank Name', f["Bank Name"]) +
+        roField('Account Number', f["Bank Account Number"]) +
+        roField('IFSC Code', f["IFSC Code"]) +
+        linkField('Cheque', f["Cheque"]||f["Upload Cheque"]) +
+        roField('Qualification', f["Last qualification Certificate"]) +
+        linkField('Offer Letter', f["Upload Offer Letter"]||f["Upload Offer letter"]) +
+        roField('Blood Group', f["Blood Group"]) +
+        roField('Emergency Contact', f["Emergency Contact Number"]) +
+        roField('Emergency Person', f["Emergency contact person Name"]) +
+        roField('Relation', f["Relation with Employee."]||f["Relation with Employee"]) +
+        roField('PF Deducted', f["Is PF Deducted"]) +
+        roField('ESIC Deducted', f["Is ESIC Deducted"]) +
+      '</div>' +
+    '</div>' +
+
+    '<div class="section-heading">✅ HR Assignment — Fill & Approve</div>' +
+    '<div class="form-grid">' +
+      '<div class="form-group"><label>Employee Code *</label>' +
+        '<input class="form-control" id="approveEmpCode" placeholder="e.g. SP045"/></div>' +
+      '<div class="form-group"><label>Employee Type *</label>' +
+        '<select class="form-control" id="approveEmpType">' +
+          '<option value="">Select type</option>' +
+          '<option value="G1">G1 — Permanent</option>' +
+          '<option value="G2">G2 — Contract</option>' +
+          '<option value="G3">G3 — Trainee</option>' +
+        '</select></div>' +
+      '<div class="form-group"><label>Department *</label>' +
+        '<select class="form-control" id="approveDept" onchange="toggleCustomDept(this.value)">' +
+          '<option value="">Select department</option>' +
+          allDepts.map(function(d){ return '<option>'+d+'</option>'; }).join('') +
+          '<option value="__other__">✏️ Other (type below)</option>' +
+        '</select></div>' +
+      '<div class="form-group" id="customDeptWrap" style="display:none;"><label>Custom Department</label>' +
+        '<input class="form-control" id="customDeptInput" placeholder="Type department name"/></div>' +
+      '<div class="form-group"><label>Designation *</label>' +
+        '<input class="form-control" id="approveDesig" placeholder="e.g. MIS Executive"/></div>' +
+      '<div class="form-group"><label>Reporting Supervisor *</label>' +
+        '<input class="form-control" id="approveReporting" placeholder="Supervisor name"/></div>' +
+    '</div>' +
+
+    '<div style="display:flex;gap:10px;margin-top:20px;flex-wrap:wrap;">' +
+      '<button class="btn btn-success" onclick="approveFormSubmission(\''+f.id+'\')">✅ Approve & Add to Database</button>' +
+      '<button class="btn btn-danger" onclick="rejectFormSubmission(\''+f.id+'\')">❌ Reject</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal(\'approveModal\')">Cancel</button>' +
+    '</div>';
+
   document.getElementById('approveModal').classList.add('active');
+}
+
+function toggleCustomDept(val) {
+  const wrap = document.getElementById('customDeptWrap');
+  if (wrap) wrap.style.display = val === '__other__' ? '' : 'none';
+}
+
+function getBulkPendingIds() {
+  return APP.formInbox.filter(f=>f.status==='pending').map(f=>f.id);
 }
 
 async function approveFormSubmission(formId) {
   const f = APP.formInbox.find(x=>x.id===formId);
   const empCode = document.getElementById('approveEmpCode').value.trim();
   const empType = document.getElementById('approveEmpType').value;
-  const dept = document.getElementById('approveDept').value;
+  let dept = document.getElementById('approveDept').value;
+  if (dept === '__other__') dept = (document.getElementById('customDeptInput')?.value||'').trim();
   const desig = document.getElementById('approveDesig').value.trim();
   const reporting = document.getElementById('approveReporting').value.trim();
   if (!empCode||!empType||!dept||!desig||!reporting) { toast('Please fill all required fields','error'); return; }
-  const now = new Date();
-  const dob = f["Date of Birth"];
-  const dobFmt = fmtDate(dob);
-  const dateRe = /^(\d{2})-(\d{2})-(\d{4})$/;
+
+  const dobFmt = fmtDate(f["Date of Birth"]);
+  const dojFmt = fmtDate(f["Date of Joining"]);
+  const dateRe = /^\d{2}-\d{2}-\d{4}$/;
   const age = dobFmt && dateRe.test(dobFmt) ? calcAge(dobFmt) : 0;
   const sheet = empType==='G1'?APP.g1:empType==='G2'?APP.g2:APP.g3;
   const empRow = {
-    "Sl No": sheet.length+1,"Enter Employee Code":empCode,"Name":f.Name,"Father/Husband Name":f["Father's Name"],
-    "Employee Type":empType,"DOB(As per Adhar)":fmtDate(f["Date of Birth"]),"Date Of Joining":fmtDate(f["Date of Joining"]),
-    "Marital Status":f["Marital Status"],"Contact Number":f["Contact Number"],"E-mail ID (Personal)":f.Email,
-    "Department":dept,"Designation":desig,"Reporting Supervisor":reporting,"Aadhar":f["Adhar card Number"],
-    "PAN":f["Pan Number"],"Bank Name":f["Bank Name"],"Bank Account No.":f["Bank Account Number"],
-    "IFSC CODE":f["IFSC Code"],"Qualification":f["Last qualification Certificate"],"Gender":f.Gender,
-    "Age":age,"Status":"Active","Source":"Google Form","ApprovedBy":APP.user.displayName,
-    "CreatedAt":now.toISOString().split('T')[0]
+    "Sl No": sheet.length+1,
+    "Enter Employee Code": empCode,
+    "Name": f.Name,
+    "Father/Husband Name": f["Father's Name"],
+    "Employee Type": empType,
+    "DOB(As per Adhar)": dobFmt,
+    "Date Of Joining": dojFmt,
+    "Marital Status": f["Marital Status"],
+    "Contact Number": f["Contact Number"],
+    "E-mail ID (Personal)": f.Email,
+    "Department": dept,
+    "Designation": desig,
+    "Reporting Supervisor": reporting,
+    "Aadhar": f["Adhar card Number"],
+    "PAN": f["Pan Number"],
+    "Bank Name": f["Bank Name"],
+    "Bank Account No.": f["Bank Account Number"],
+    "IFSC CODE": f["IFSC Code"],
+    "Qualification": f["Last qualification Certificate"],
+    "Gender": f.Gender,
+    "Age": age,
+    "Status": "Active",
+    "Is PF Deducted": f["Is PF Deducted"]||"",
+    "Is ESIC Deducted": f["Is ESIC Deducted"]||"",
+    "Source": "Google Form",
+    "ApprovedBy": APP.user.displayName,
+    "CreatedAt": (function(){ const n=new Date(); return String(n.getDate()).padStart(2,'0')+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+n.getFullYear(); })()
   };
   sheet.push(empRow);
   f.status='approved'; f.empCode=empCode;
   if (APP.scriptUrl) { try { await postToScript({action:'approveForm',formRowId:formId,...empRow}); } catch(e) {} }
   closeModal('approveModal');
-  toast(`✅ ${f.Name} approved as ${empCode}`, 'success');
+  toast('✅ '+f.Name+' approved as '+empCode, 'success');
   renderSidebarNav();
   navigateTo('formInbox');
 }
@@ -1285,6 +1433,101 @@ async function rejectFormSubmission(formId) {
   if (APP.scriptUrl) { try { await postToScript({action:'rejectForm',formRowId:formId,reason,rejectedBy:APP.user.displayName}); } catch(e) {} }
   closeModal('approveModal');
   toast('Submission rejected','info');
+  renderSidebarNav();
+  navigateTo('formInbox');
+}
+
+function openBulkApproveModal() {
+  const pending = APP.formInbox.filter(f=>f.status==='pending');
+  if (!pending.length) { toast('No pending submissions','info'); return; }
+
+  const existingDepts = [...new Set([...APP.g1,...APP.g2,...APP.g3].map(e=>e.Department).filter(Boolean))];
+  const defaultDepts = ['Technology','Human Resources','Finance','Sales','Operations','Marketing','Legal','Admin','Office'];
+  const allDepts = [...new Set([...defaultDepts,...existingDepts])].sort();
+
+  const rows = pending.map(function(f,i) {
+    return '<tr id="brow_'+i+'">' +
+      '<td style="font-weight:600;font-size:13px;">'+f.Name+'<div style="font-size:11px;color:var(--text3);">'+fmtDate(f["Date of Birth"])+'</div></td>' +
+      '<td><input class="form-control" id="b_code_'+i+'" placeholder="e.g. SP0'+String(46+i)+'" style="min-width:100px;"/></td>' +
+      '<td><select class="form-control" id="b_type_'+i+'">' +
+        '<option value="">Type</option>' +
+        '<option value="G1">G1</option><option value="G2">G2</option><option value="G3">G3</option>' +
+      '</select></td>' +
+      '<td>' +
+        '<select class="form-control" id="b_dept_'+i+'" onchange="bulkToggleDept(this,'+i+')" style="min-width:130px;">' +
+          '<option value="">Dept</option>' +
+          allDepts.map(function(d){ return '<option>'+d+'</option>'; }).join('') +
+          '<option value="__other__">✏️ Other</option>' +
+        '</select>' +
+        '<input class="form-control" id="b_custdept_'+i+'" placeholder="Custom dept" style="margin-top:4px;display:none;"/>' +
+      '</td>' +
+      '<td><input class="form-control" id="b_desig_'+i+'" placeholder="Designation" style="min-width:130px;"/></td>' +
+      '<td><input class="form-control" id="b_report_'+i+'" placeholder="Supervisor" style="min-width:110px;"/></td>' +
+      '<td><input type="checkbox" id="b_skip_'+i+'" style="width:16px;height:16px;" title="Skip this row"/></td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('approveModalBody').innerHTML =
+    '<div style="font-size:13px;color:var(--text2);margin-bottom:14px;background:var(--yellow-lt);padding:10px 14px;border-radius:8px;border:1.5px solid rgba(196,134,10,0.3);">' +
+      '⚡ Fill details for all <strong>'+pending.length+' pending</strong> submissions below. Check "Skip" to exclude any row.' +
+    '</div>' +
+    '<div style="overflow-x:auto;margin-bottom:20px;">' +
+    '<table style="min-width:900px;">' +
+    '<thead><tr><th>Applicant</th><th>Emp Code *</th><th>Type *</th><th>Department *</th><th>Designation *</th><th>Supervisor *</th><th>Skip</th></tr></thead>' +
+    '<tbody>' + rows + '</tbody>' +
+    '</table></div>' +
+    '<div style="display:flex;gap:10px;">' +
+      '<button class="btn btn-success" onclick="doBulkApprove('+JSON.stringify(pending.map(function(f){return f.id;}))+')">✅ Approve All</button>' +
+      '<button class="btn btn-ghost" onclick="closeModal(\'approveModal\')">Cancel</button>' +
+    '</div>';
+
+  document.getElementById('approveModal').classList.add('active');
+}
+
+function bulkToggleDept(sel, i) {
+  const cd = document.getElementById('b_custdept_'+i);
+  if (cd) cd.style.display = sel.value === '__other__' ? '' : 'none';
+}
+
+async function doBulkApprove(ids) {
+  let done = 0, skipped = 0, errors = [];
+  for (let i = 0; i < ids.length; i++) {
+    const skip = document.getElementById('b_skip_'+i)?.checked;
+    if (skip) { skipped++; continue; }
+    const empCode = (document.getElementById('b_code_'+i)?.value||'').trim();
+    const empType = document.getElementById('b_type_'+i)?.value||'';
+    let dept = document.getElementById('b_dept_'+i)?.value||'';
+    if (dept === '__other__') dept = (document.getElementById('b_custdept_'+i)?.value||'').trim();
+    const desig = (document.getElementById('b_desig_'+i)?.value||'').trim();
+    const reporting = (document.getElementById('b_report_'+i)?.value||'').trim();
+    if (!empCode||!empType||!dept||!desig||!reporting) { errors.push('Row '+(i+1)+': fill all fields'); continue; }
+    const f = APP.formInbox.find(x=>x.id===ids[i]);
+    if (!f) continue;
+    const dobFmt = fmtDate(f["Date of Birth"]);
+    const age = dobFmt && /^\d{2}-\d{2}-\d{4}$/.test(dobFmt) ? calcAge(dobFmt) : 0;
+    const sheet = empType==='G1'?APP.g1:empType==='G2'?APP.g2:APP.g3;
+    const today = (function(){ const n=new Date(); return String(n.getDate()).padStart(2,'0')+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+n.getFullYear(); })();
+    const empRow = {
+      "Sl No":sheet.length+1,"Enter Employee Code":empCode,"Name":f.Name,
+      "Father/Husband Name":f["Father's Name"],"Employee Type":empType,
+      "DOB(As per Adhar)":dobFmt,"Date Of Joining":fmtDate(f["Date of Joining"]),
+      "Marital Status":f["Marital Status"],"Contact Number":f["Contact Number"],
+      "E-mail ID (Personal)":f.Email,"Department":dept,"Designation":desig,
+      "Reporting Supervisor":reporting,"Aadhar":f["Adhar card Number"],
+      "PAN":f["Pan Number"],"Bank Name":f["Bank Name"],
+      "Bank Account No.":f["Bank Account Number"],"IFSC CODE":f["IFSC Code"],
+      "Qualification":f["Last qualification Certificate"],"Gender":f.Gender,
+      "Age":age,"Status":"Active","Is PF Deducted":f["Is PF Deducted"]||"",
+      "Is ESIC Deducted":f["Is ESIC Deducted"]||"",
+      "Source":"Google Form","ApprovedBy":APP.user.displayName,"CreatedAt":today
+    };
+    sheet.push(empRow);
+    f.status='approved'; f.empCode=empCode;
+    if (APP.scriptUrl) { try { await postToScript({action:'approveForm',formRowId:ids[i],...empRow}); } catch(e) {} }
+    done++;
+  }
+  closeModal('approveModal');
+  if (errors.length) { toast(errors[0],'error'); } else { toast('✅ '+done+' approved'+(skipped?' · '+skipped+' skipped':''),'success'); }
   renderSidebarNav();
   navigateTo('formInbox');
 }
@@ -1740,7 +1983,8 @@ function saveBasicInfo() { toast('Basic info saved','success'); }
 
 // ===================== ADD EMPLOYEE =====================
 function openAddEmpModal() {
-  const depts=['Technology','Human Resources','Finance','Sales','Operations','Marketing','Legal','Admin'];
+  const existingDepts2 = [...new Set([...APP.g1,...APP.g2,...APP.g3].map(e=>e.Department).filter(Boolean))];
+  const depts=['Technology','Human Resources','Finance','Sales','Operations','Marketing','Legal','Admin','Office',...existingDepts2].filter((v,i,a)=>a.indexOf(v)===i).sort();
   document.getElementById('addEmpModalBody').innerHTML=`
 <div class="section-heading">Personal Information</div>
 <div class="form-grid">
@@ -1769,7 +2013,8 @@ function openAddEmpModal() {
   <div class="form-group"><label>Employee Code *</label><input class="form-control" id="ae_code" placeholder="e.g. G1-015"/></div>
   <div class="form-group"><label>Employee Type *</label><select class="form-control" id="ae_type"><option value="">Select</option><option>G1</option><option>G2</option><option>G3</option></select></div>
   <div class="form-group"><label>Date of Joining *</label><input class="form-control" id="ae_doj" type="text" placeholder="DD-MM-YYYY" maxlength="10" data-date/><div class="date-error"></div></div>
-  <div class="form-group"><label>Department *</label><select class="form-control" id="ae_dept"><option value="">Select</option>${depts.map(d=>`<option>${d}</option>`).join('')}</select></div>
+  <div class="form-group"><label>Department *</label><select class="form-control" id="ae_dept" onchange="if(this.value==='__other__'){document.getElementById('ae_custdept').style.display=''}else{document.getElementById('ae_custdept').style.display='none'}"><option value="">Select</option>${depts.map(d=>`<option>${d}</option>`).join('')}<option value="__other__">✏️ Other (type below)</option></select></div>
+  <div class="form-group" id="ae_custdept" style="display:none;"><label>Custom Department</label><input class="form-control" id="ae_custdept_input" placeholder="Type department name"/></div>
   <div class="form-group"><label>Designation *</label><input class="form-control" id="ae_desig"/></div>
   <div class="form-group"><label>Reporting Supervisor</label><input class="form-control" id="ae_reporting"/></div>
   <div class="form-group"><label>PF Deducted?</label><select class="form-control" id="ae_pf"><option>Yes</option><option>No</option></select></div>
@@ -1795,10 +2040,14 @@ async function saveNewEmployee() {
   if (doj && !dateRe.test(doj)) { toast('Date of Joining must be DD-MM-YYYY','error'); return; }
   const age = dob && dateRe.test(dob) ? calcAge(dob) : (parseInt(g('ae_age'))||0);
   const sheet=type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
-  const emp={"Sl No":sheet.length+1,"Enter Employee Code":code,"Name":name,"Father/Husband Name":g('ae_father'),"Employee Type":type,"DOB(As per Adhar)":dob,"Date Of Joining":doj,"Marital Status":g('ae_marital'),"Contact Number":g('ae_contact'),"E-mail ID (Personal)":g('ae_email'),"E-mail ID (Official)":g('ae_oemail'),"Department":g('ae_dept'),"Designation":g('ae_desig'),"Reporting Supervisor":g('ae_reporting'),"Aadhar":g('ae_aadhar'),"PAN":g('ae_pan'),"Bank Name":g('ae_bank'),"Bank Account No.":g('ae_accno'),"IFSC CODE":g('ae_ifsc'),"Qualification":g('ae_qual'),"Gender":g('ae_gender'),"Age":age,"Status":g('ae_status')||'Active',"Source":"Manual","ApprovedBy":APP.user.displayName,"CreatedAt":new Date().toISOString().split('T')[0]};
+  let dept = g('ae_dept');
+  if (dept === '__other__') dept = (document.getElementById('ae_custdept_input')?.value||'').trim();
+  if (!dept) { toast('Please select or enter a department','error'); return; }
+  const today = (function(){ const n=new Date(); return String(n.getDate()).padStart(2,'0')+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+n.getFullYear(); })();
+  const emp={"Sl No":sheet.length+1,"Enter Employee Code":code,"Name":name,"Father/Husband Name":g('ae_father'),"Employee Type":type,"DOB(As per Adhar)":dob,"Date Of Joining":doj,"Marital Status":g('ae_marital'),"Contact Number":g('ae_contact'),"E-mail ID (Personal)":g('ae_email'),"E-mail ID (Official)":g('ae_oemail'),"Department":dept,"Designation":g('ae_desig'),"Reporting Supervisor":g('ae_reporting'),"Aadhar":g('ae_aadhar'),"PAN":g('ae_pan'),"Bank Name":g('ae_bank'),"Bank Account No.":g('ae_accno'),"IFSC CODE":g('ae_ifsc'),"Qualification":g('ae_qual'),"Gender":g('ae_gender'),"Age":age,"Status":g('ae_status')||'Active',"Source":"Manual","ApprovedBy":APP.user.displayName,"CreatedAt":today};
   sheet.push(emp);
   if (APP.scriptUrl) { try { await postToScript({action:'addEmployee',...emp}); } catch(e) {} }
-  closeModal('addEmpModal'); toast(`✅ ${name} added as ${code}`,'success'); navigateTo('masterDB');
+  closeModal('addEmpModal'); toast('✅ '+name+' added as '+code,'success'); navigateTo('masterDB');
 }
 
 // ===================== SALARY PAGE =====================
