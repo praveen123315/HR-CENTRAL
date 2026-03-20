@@ -830,7 +830,9 @@ function initApp() {
   APP.g2 = JSON.parse(JSON.stringify(SAMPLE_G2));
   APP.g3 = JSON.parse(JSON.stringify(SAMPLE_G3));
   APP.formInbox = JSON.parse(JSON.stringify(SAMPLE_INBOX));
-  APP.policies = JSON.parse(JSON.stringify(SAMPLE_POLICIES));
+  // Load policies from localStorage (persistent), fall back to empty array so admin can add own
+  const storedPolicies = localStorage.getItem('hrc_policies');
+  APP.policies = storedPolicies ? JSON.parse(storedPolicies) : [];
   APP.users = JSON.parse(JSON.stringify(SAMPLE_USERS));
   if (window.innerWidth <= 768) document.getElementById('mobileMenuBtn').style.display = 'block';
 }
@@ -964,7 +966,12 @@ function attachPageListeners(page) {
   }
   if (page === 'setup') loadSetupValues();
   if (page === 'empDetail') {
-    setTimeout(()=>{ document.querySelectorAll('#pageBody input[data-date]').forEach(formatDateInput); }, 50);
+    setTimeout(()=>{
+      document.querySelectorAll('#pageBody input[data-date]').forEach(formatDateInput);
+      // Auto-calculate if salary data exists
+      const basicEl = document.getElementById('dsal_basic');
+      if (basicEl && parseFloat(basicEl.value) > 0) calcDetailSalary();
+    }, 50);
   }
 }
 
@@ -1108,48 +1115,91 @@ let _inboxFilter = 'all';
 function renderFormInbox() {
   const role = APP.user?.role;
   if (role !== 'admin' && role !== 'hr') return `<div class="empty-state"><div class="empty-icon">🔒</div><h3>Access Denied</h3><p>This section is available to HR and Admin only.</p></div>`;
-  const counts = { all: APP.formInbox.length, pending: APP.formInbox.filter(f=>f.status==='pending').length, approved: APP.formInbox.filter(f=>f.status==='approved').length, rejected: APP.formInbox.filter(f=>f.status==='rejected').length };
+  const counts = {
+    all: APP.formInbox.length,
+    pending: APP.formInbox.filter(f=>f.status==='pending').length,
+    approved: APP.formInbox.filter(f=>f.status==='approved').length,
+    rejected: APP.formInbox.filter(f=>f.status==='rejected').length
+  };
   return `
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-  <div class="tab-bar" id="inboxTabBar">
-    <button class="tab-btn active" onclick="filterInbox('all',this)">All (${counts.all})</button>
-    <button class="tab-btn" onclick="filterInbox('pending',this)">⏳ Pending (${counts.pending})</button>
-    <button class="tab-btn" onclick="filterInbox('approved',this)">✅ Approved (${counts.approved})</button>
-    <button class="tab-btn" onclick="filterInbox('rejected',this)">❌ Rejected (${counts.rejected})</button>
+<div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563a8 100%);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:20px;color:white;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+  <div>
+    <div style="font-size:18px;font-weight:700;font-family:var(--serif);">📥 New Employee Form Submissions</div>
+    <div style="font-size:12px;opacity:0.8;margin-top:3px;">Review applications submitted via the Google Form onboarding link</div>
   </div>
-  <button class="btn btn-secondary btn-sm" onclick="fetchAllData()">🔄 Refresh</button>
+  <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.3);" onclick="fetchAllData()">🔄 Refresh</button>
 </div>
-<div id="inboxCards">${renderInboxCards('all')}</div>`;
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+  <div style="background:var(--white);border:1.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('all',this)">
+    <div style="font-size:22px;font-weight:800;color:var(--text);">${counts.all}</div>
+    <div style="font-size:11px;color:var(--text3);margin-top:3px;font-weight:600;">TOTAL</div>
+  </div>
+  <div style="background:var(--yellow-lt);border:1.5px solid rgba(196,134,10,0.3);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('pending',this)">
+    <div style="font-size:22px;font-weight:800;color:var(--yellow);">${counts.pending}</div>
+    <div style="font-size:11px;color:var(--yellow);margin-top:3px;font-weight:600;">⏳ PENDING</div>
+  </div>
+  <div style="background:var(--green-lt);border:1.5px solid rgba(45,158,107,0.3);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('approved',this)">
+    <div style="font-size:22px;font-weight:800;color:var(--green);">${counts.approved}</div>
+    <div style="font-size:11px;color:var(--green);margin-top:3px;font-weight:600;">✅ APPROVED</div>
+  </div>
+  <div style="background:var(--red-lt);border:1.5px solid rgba(217,79,79,0.3);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('rejected',this)">
+    <div style="font-size:22px;font-weight:800;color:var(--red);">${counts.rejected}</div>
+    <div style="font-size:11px;color:var(--red);margin-top:3px;font-weight:600;">❌ REJECTED</div>
+  </div>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:16px;" id="inboxTabBar">
+  <button class="tab-btn active" onclick="filterInbox('all',this)">All (${counts.all})</button>
+  <button class="tab-btn" onclick="filterInbox('pending',this)">⏳ Pending (${counts.pending})</button>
+  <button class="tab-btn" onclick="filterInbox('approved',this)">✅ Approved (${counts.approved})</button>
+  <button class="tab-btn" onclick="filterInbox('rejected',this)">❌ Rejected (${counts.rejected})</button>
+</div>
+<div class="card">
+  <div id="inboxCards">${renderInboxTable('all')}</div>
+</div>`;
 }
 
-function renderInboxCards(filter) {
+function renderInboxTable(filter) {
   const items = filter === 'all' ? APP.formInbox : APP.formInbox.filter(f=>f.status===filter);
-  if (!items.length) return `<div class="empty-state"><div class="empty-icon">📭</div><h3>No submissions</h3><p>No ${filter === 'all' ? '' : filter + ' '}form submissions found.</p></div>`;
-  return items.map(f=>`
-<div class="inbox-card ${f.status}">
-  <div class="inbox-card-header">
-    <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#3db89e);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:14px;flex-shrink:0;">${f.Name[0]}</div>
-    <span class="inbox-card-name">${f.Name}</span>
-    <span class="badge ${f.status==='pending'?'badge-yellow':f.status==='approved'?'badge-green':'badge-red'}">
-      ${f.status==='pending'?'⏳ Pending':f.status==='approved'?'✅ Approved':'❌ Rejected'}
-    </span>
-    ${f.empCode?`<span class="badge badge-teal font-mono">${f.empCode}</span>`:''}
-  </div>
-  <div class="inbox-card-meta">
-    <span>📅 ${f.Timestamp||'—'}</span>
-    <span>📧 ${f.Email||'—'}</span>
-    <span>📞 ${f['Contact Number']||'—'}</span>
-    <span>🎓 ${f['Last qualification Certificate']||'—'}</span>
-  </div>
-  ${f.status==='pending'?`<div style="margin-top:14px;"><button class="btn btn-primary btn-sm" onclick="openApproveModal('${f.id}')">📋 Review & Approve →</button></div>`:''}
-  ${f.status==='rejected'&&f.rejectReason?`<div style="margin-top:8px;font-size:12px;color:var(--red);background:var(--red-lt);padding:6px 10px;border-radius:6px;">Reason: ${f.rejectReason}</div>`:''}
-</div>`).join('');
+  if (!items.length) {
+    return '<div class="empty-state" style="padding:40px;"><div class="empty-icon">📭</div><h3>No submissions</h3><p style="color:var(--text3);">No ' + (filter==='all'?'':filter+' ') + 'form submissions found.</p></div>';
+  }
+  const rows = items.map(function(f) {
+    const statusClass = f.status==='pending' ? 'badge-yellow' : f.status==='approved' ? 'badge-green' : 'badge-red';
+    const statusLabel = f.status==='pending' ? '⏳ Pending' : f.status==='approved' ? '✅ Approved' : '❌ Rejected';
+    const rowBg = f.status==='pending' ? 'background:var(--yellow-lt);' : f.status==='rejected' ? 'background:var(--red-lt);opacity:0.8;' : '';
+    const actionBtn = f.status==='pending'
+      ? '<button class="btn btn-primary btn-sm" onclick="openApproveModal(\''+f.id+'\')">📋 Review →</button>'
+      : (f.empCode ? '<span class="badge badge-teal font-mono" style="font-size:11px;">'+f.empCode+'</span>' : '<span style="color:var(--text4);font-size:12px;">—</span>');
+    return '<tr style="'+rowBg+'">' +
+      '<td style="font-weight:600;color:var(--text);">' + f.Name + '</td>' +
+      '<td style="font-size:12px;color:var(--text2);">' + (f.Email||'—') + '</td>' +
+      '<td style="font-size:12px;color:var(--text3);">' + (f['Contact Number']||'—') + '</td>' +
+      '<td style="font-size:12px;color:var(--text2);">' + (f['Last qualification Certificate']||'—') + '</td>' +
+      '<td style="font-size:12px;color:var(--text3);font-family:var(--mono);">' + (f.Timestamp||'—') + '</td>' +
+      '<td><span class="badge ' + statusClass + '">' + statusLabel + '</span>' +
+        (f.rejectReason ? '<div style="font-size:10px;color:var(--red);margin-top:3px;">'+f.rejectReason+'</div>' : '') + '</td>' +
+      '<td>' + actionBtn + '</td>' +
+      '</tr>';
+  }).join('');
+  return '<div class="table-wrap"><table>' +
+    '<thead><tr>' +
+    '<th>Applicant Name</th>' +
+    '<th>Email</th>' +
+    '<th>Contact</th>' +
+    '<th>Qualification</th>' +
+    '<th>Submitted On</th>' +
+    '<th>Status</th>' +
+    '<th>Action</th>' +
+    '</tr></thead>' +
+    '<tbody>' + rows + '</tbody>' +
+    '</table></div>';
 }
 
 function filterInbox(filter, btn) {
   document.querySelectorAll('#inboxTabBar .tab-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('inboxCards').innerHTML = renderInboxCards(filter);
+  if (btn && btn.classList) btn.classList.add('active');
+  const el = document.getElementById('inboxCards');
+  if (el) el.innerHTML = renderInboxTable(filter);
 }
 
 function openApproveModal(formId) {
@@ -1286,6 +1336,20 @@ function renderDBTable() {
   if (APP._deptFilter) employees=employees.filter(e=>e.Department===APP._deptFilter);
   if (APP._statusFilter==='active') employees=employees.filter(e=>e.Status==='Active');
   else if (APP._statusFilter==='inactive') employees=employees.filter(e=>e.Status&&e.Status!=='Active');
+  // Sort by employee code numerically — handles G1-001, SP045, SP-024 etc
+  employees = [...employees].sort((a,b)=>{
+    const codeA = (a['Enter Employee Code']||'').trim();
+    const codeB = (b['Enter Employee Code']||'').trim();
+    // Extract trailing number for proper numeric sort
+    const mA = codeA.match(/^(.*?)(\d+)$/);
+    const mB = codeB.match(/^(.*?)(\d+)$/);
+    if (mA && mB) {
+      const pfxCmp = mA[1].localeCompare(mB[1], undefined, {sensitivity:'base'});
+      if (pfxCmp !== 0) return pfxCmp;
+      return parseInt(mA[2], 10) - parseInt(mB[2], 10);
+    }
+    return codeA.localeCompare(codeB);
+  });
   if (!employees.length) return `<div class="empty-state" style="padding:40px;"><div class="empty-icon">🔍</div><h3>No employees found</h3></div>`;
   const typeColors = {G1:'badge-green',G2:'badge-yellow',G3:'badge-purple'};
   const role = APP.user?.role;
@@ -1396,6 +1460,13 @@ function renderEmpDetail() {
         </select></div>`
     : `<div class="form-group"><label>Status</label><input class="form-control read-only-field" value="${statusVal}" readonly/></div>`;
   const salInputs=[['Status','Status','text'],['EPFO No.','EPFO No.','text'],['ESIC No.','ESIC No . (Previous/ Existing)','text'],['Basic ₹','Basic','number'],['HRA ₹','HRA','number'],['Other Allow ₹','other','number'],['Med. Allow ₹','Med. Allow','number'],['Spl Alw ₹','Spl Alw','number'],['Misc Allow ₹','Misc Allow','number'],['Fixed Other ₹','Fixed Other All','number'],['Variable (p.a.) ₹','Variable (p.a.)','number']];
+  const salEsicOn  = e['Is ESIC Deducted']  !== 'No';
+  const salPfOn    = e['Is PF Deducted']    !== 'No';
+  const salBonusOn = e['Has Bonus']         !== 'No';
+  const salGratOn  = e['Has Gratuity']      !== 'No';
+  const salELOn    = e['Has EL']            !== 'No';
+  const salCLOn    = e['Has CL']            !== 'No';
+  const salInsurOn = e['Has Insurance']     !== 'No';
   const typeColor = {G1:'badge-green',G2:'badge-yellow',G3:'badge-purple'};
   return `
 <div style="margin-bottom:16px;"><button class="btn btn-ghost btn-sm" onclick="navigateTo('masterDB')">← Back to Database</button></div>
@@ -1439,15 +1510,59 @@ function renderEmpDetail() {
 <div class="card mb-4">
   <div class="card-header">
     <span class="card-title">💰 Salary Information</span>
-    <span style="font-size:11px;color:var(--text3);background:var(--accent-lt);padding:3px 10px;border-radius:99px;">Harsh's Section</span>
-    ${canEditSalary?`<button class="btn btn-success btn-sm" onclick="saveEmpSalary('${currentEmpCode}','${currentEmpType}')">💾 Save Salary</button>`:''}
+    <span style="font-size:11px;color:var(--accent-dk);background:var(--accent-lt);padding:3px 10px;border-radius:99px;">Harsh's Section</span>
+    ${canEditSalary?`<button class="btn btn-success btn-sm" onclick="saveDetailSalary('${currentEmpCode}','${currentEmpType}')">💾 Save Salary</button>`:''}
   </div>
   <div class="card-body">
     ${canEditSalary?`
-    <div class="form-grid">
-      ${salInputs.map(([lbl,key,type])=>`<div class="form-group"><label>${lbl}</label>
-        <input class="form-control" id="sal_${key.replace(/[^a-zA-Z0-9]/g,'_')}" type="${type}"
-          value="${e[key]||''}" ${type==='number'?'oninput="calcSalaryPreview()"':''} placeholder="${type==='number'?'0':''}"/></div>`).join('')}
+    <!-- BENEFIT TOGGLES -->
+    <div style="margin-bottom:20px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--border);">⚙️ Applicable Benefits — Enable/Disable per Employee</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${[
+          ['det_tog_esic','🏥 ESIC',salEsicOn],
+          ['det_tog_pf','🏦 PF',salPfOn],
+          ['det_tog_insur','🛡️ Insurance',salInsurOn],
+          ['det_tog_bonus','🎁 Bonus',salBonusOn],
+          ['det_tog_grat','🏠 Gratuity',salGratOn],
+          ['det_tog_el','📅 EL (Earned Leave)',salELOn],
+          ['det_tog_cl','📋 CL (Casual Leave)',salCLOn]
+        ].map(([id,label,checked])=>`
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:600;color:${checked?'var(--accent-dk)':'var(--text3)'};background:${checked?'var(--accent-lt)':'var(--surface3)'};border:1.5px solid ${checked?'var(--accent-md)':'var(--border)'};border-radius:8px;padding:7px 12px;transition:all 0.15s;" id="lbl_${id}">
+          <input type="checkbox" id="${id}" ${checked?'checked':''} onchange="detToggleUpdate('${id}')" style="width:15px;height:15px;accent-color:var(--accent);cursor:pointer;">
+          ${label}
+        </label>`).join('')}
+      </div>
+    </div>
+    <!-- IDENTITY FIELDS -->
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--border);">🪪 Statutory IDs</div>
+    <div class="form-grid" style="margin-bottom:16px;">
+      <div class="form-group"><label>EPFO No.</label><input class="form-control" id="dsal_epfo" type="text" value="${e['EPFO No.']||''}" placeholder="EPFO number" oninput="calcDetailSalary()"/></div>
+      <div class="form-group"><label>ESIC No. (Previous/Existing)</label><input class="form-control" id="dsal_esic_no" type="text" value="${e['ESIC No . (Previous/ Existing)']||''}" placeholder="ESIC number" oninput="calcDetailSalary()"/></div>
+    </div>
+    <!-- SALARY COMPONENTS -->
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--border);">💵 Salary Components</div>
+    <div class="form-grid" style="margin-bottom:16px;">
+      <div class="form-group"><label>Basic ₹</label><input class="form-control" id="dsal_basic" type="number" value="${e['Basic']||''}" placeholder="0" oninput="calcDetailSalary()"/></div>
+      <div class="form-group"><label>HRA ₹</label><input class="form-control" id="dsal_hra" type="number" value="${e['HRA']||''}" placeholder="0" oninput="calcDetailSalary()"/></div>
+      <div class="form-group"><label>Other Allowance ₹</label><input class="form-control" id="dsal_other" type="number" value="${e['other']||''}" placeholder="0" oninput="calcDetailSalary()"/></div>
+      <div class="form-group"><label>Monthly Gross ₹</label><input class="form-control" id="dsal_gross" type="number" value="${e['Monthly (Gross)']||''}" placeholder="Auto-calculated" style="background:var(--accent-lt);font-weight:700;" readonly/></div>
+    </div>
+    <!-- CALCULATED FIELDS (read-only display) -->
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;padding-bottom:6px;border-bottom:1.5px solid var(--border);">📊 Calculated Values (Auto)</div>
+    <div class="form-grid" style="margin-bottom:16px;">
+      <div class="form-group"><label>ESI Employer (3.25%) ₹</label><input class="form-control" id="dsal_esi_er" type="number" readonly style="background:var(--surface3);" value="${e['ESI (Employers Contribution)-3.25%']||''}"/></div>
+      <div class="form-group"><label>PF Employer (13%) ₹</label><input class="form-control" id="dsal_pf_er" type="number" readonly style="background:var(--surface3);" value="${e['PF (Employers Contribution)-13%']||''}"/></div>
+      <div class="form-group"><label>Insurance ₹</label><input class="form-control" id="dsal_insurance" type="number" readonly style="background:var(--surface3);" value="${e['INSURANCE']||''}"/></div>
+      <div class="form-group"><label>Bonus ₹ (8.33%)</label><input class="form-control" id="dsal_bonus" type="number" readonly style="background:var(--surface3);" value="${e['Bonus']||''}"/></div>
+      <div class="form-group"><label>Gratuity ₹ (4.81%)</label><input class="form-control" id="dsal_gratuity" type="number" readonly style="background:var(--surface3);" value="${e['Gratutity']||''}"/></div>
+      <div class="form-group"><label>PL / EL ₹ (monthly)</label><input class="form-control" id="dsal_pl" type="number" readonly style="background:var(--surface3);" value="${e['PL']||''}"/></div>
+      <div class="form-group"><label>CL ₹ (monthly)</label><input class="form-control" id="dsal_cl" type="number" readonly style="background:var(--surface3);" value="${e['cl']||''}"/></div>
+      <div class="form-group"><label>CTC per Month ₹</label><input class="form-control" id="dsal_ctcpm" type="number" readonly style="background:var(--green-lt);font-weight:700;" value="${e['CTC (p.m.)']||''}"/></div>
+      <div class="form-group"><label>CTC per Annum ₹</label><input class="form-control" id="dsal_ctcpa" type="number" readonly style="background:var(--green-lt);font-weight:700;" value="${e['CTC (p.a.)']||''}"/></div>
+      <div class="form-group"><label>ESIC Employee (0.75%) ₹</label><input class="form-control" id="dsal_esi_ee" type="number" readonly style="background:var(--red-lt);" value="${e['ESIC (Employee Deduction)-0.75%']||''}"/></div>
+      <div class="form-group"><label>PF Deduction (12%) ₹</label><input class="form-control" id="dsal_pf_ee" type="number" readonly style="background:var(--red-lt);" value="${e['PF Deduction (Employee Deduction)-12%']||''}"/></div>
+      <div class="form-group"><label>Take Home Salary ₹</label><input class="form-control" id="dsal_takehome" type="number" readonly style="background:var(--green-lt);font-weight:700;color:var(--green);font-size:15px;" value="${e['Take Home Salary']||''}"/></div>
     </div>
     <div class="salary-preview" id="salaryPreviewDetail">
       <h4>💳 Live CTC Breakdown</h4>
@@ -1459,7 +1574,7 @@ function renderEmpDetail() {
 <div class="card">
   <div class="card-header">
     <span class="card-title">📋 Document Status</span>
-    <span style="font-size:11px;color:var(--text3);background:var(--purple-lt);color:var(--purple);padding:3px 10px;border-radius:99px;">Nupur's Section</span>
+    <span style="font-size:11px;background:var(--purple-lt);color:var(--purple);padding:3px 10px;border-radius:99px;">Nupur's Section</span>
     ${canEditDoc?`<button class="btn btn-primary btn-sm" onclick="saveEmpDocs('${currentEmpCode}','${currentEmpType}')">💾 Save Docs</button>`:''}
   </div>
   <div class="card-body">
@@ -1482,31 +1597,120 @@ function renderEmpDetail() {
 </div>`;
 }
 
-function calcSalaryPreview() {
-  const g=(id)=>parseFloat(document.getElementById(id)?.value)||0;
-  const basic=g('sal_Basic'),hra=g('sal_HRA'),other=g('sal_other'),med=g('sal_Med__Allow'),spl=g('sal_Spl_Alw'),misc=g('sal_Misc_Allow'),fixed=g('sal_Fixed_Other_All');
-  const gross=basic+hra+other+med+spl+misc+fixed;
-  const esiER=gross*0.0325,pfER=basic*0.13,bonus=basic*0.0833,gratuity=basic*0.0481,esiEE=gross*0.0075,pfEE=basic*0.12;
-  const ctcPM=gross+esiER+pfER+500+bonus/12+gratuity/12,ctcPA=ctcPM*12,takeHome=gross-esiEE-pfEE;
-  const fmt=(n)=>`₹${n.toLocaleString('en-IN',{maximumFractionDigits:0})}`;
-  const el=document.getElementById('salaryPreviewDetail');
-  if (!el) return;
-  el.innerHTML=`<h4>💳 Live CTC Breakdown</h4>
-    <div class="salary-section-header">Earnings</div>
-    <div class="salary-row"><span>Basic</span><span class="amount">${fmt(basic)}</span></div>
-    <div class="salary-row"><span>HRA</span><span class="amount">${fmt(hra)}</span></div>
-    <div class="salary-row"><span>Other Allowances</span><span class="amount">${fmt(other+med+spl+misc+fixed)}</span></div>
-    <div class="salary-row total"><span>Monthly Gross</span><span class="amount">${fmt(gross)}</span></div>
-    <div class="salary-section-header">Employer Contributions</div>
-    <div class="salary-row"><span>ESI ER (3.25%)</span><span class="amount">${fmt(esiER)}</span></div>
-    <div class="salary-row"><span>PF ER (13%)</span><span class="amount">${fmt(pfER)}</span></div>
-    <div class="salary-row"><span>Insurance</span><span class="amount">₹500</span></div>
-    <div class="salary-row total"><span>CTC per Month</span><span class="amount">${fmt(ctcPM)}</span></div>
-    <div class="salary-row total"><span>CTC per Annum</span><span class="amount">${fmt(ctcPA)}</span></div>
-    <div class="salary-section-header">Employee Deductions</div>
-    <div class="salary-row deduction"><span>ESIC EE (0.75%)</span><span class="amount">−${fmt(esiEE)}</span></div>
-    <div class="salary-row deduction"><span>PF Deduction (12%)</span><span class="amount">−${fmt(pfEE)}</span></div>
-    <div class="salary-row total" style="background:var(--green-lt);border-radius:8px;padding:10px 12px;margin-top:4px;"><span>🏠 Take Home Salary</span><span class="amount" style="color:var(--green);">${fmt(takeHome)}</span></div>`;
+function detToggleUpdate(id) {
+  const el = document.getElementById(id);
+  const lbl = document.getElementById('lbl_'+id);
+  if (!el || !lbl) return;
+  const on = el.checked;
+  lbl.style.color = on ? 'var(--accent-dk)' : 'var(--text3)';
+  lbl.style.background = on ? 'var(--accent-lt)' : 'var(--surface3)';
+  lbl.style.borderColor = on ? 'var(--accent-md)' : 'var(--border)';
+  calcDetailSalary();
+}
+
+function calcDetailSalary() {
+  const g = (id) => parseFloat(document.getElementById(id)?.value)||0;
+  const tog = (id) => document.getElementById(id)?.checked ?? true;
+  const set = (id, val) => { const el=document.getElementById(id); if(el) el.value=Math.round(val)||''; };
+
+  const basic = g('dsal_basic'), hra = g('dsal_hra'), other = g('dsal_other');
+  const gross = basic + hra + other;
+
+  const esicOn  = tog('det_tog_esic');
+  const pfOn    = tog('det_tog_pf');
+  const insurOn = tog('det_tog_insur');
+  const bonusOn = tog('det_tog_bonus');
+  const gratOn  = tog('det_tog_grat');
+  const elOn    = tog('det_tog_el');
+  const clOn    = tog('det_tog_cl');
+
+  const esiER    = esicOn  ? Math.round(gross * 0.0325) : 0;
+  const pfER     = pfOn    ? Math.round(basic * 0.13)   : 0;
+  const insurance= insurOn ? 500                        : 0;
+  const bonus    = bonusOn ? Math.round(basic * 0.0833) : 0;
+  const gratuity = gratOn  ? Math.round(basic * 0.0481) : 0;
+  const el       = elOn    ? Math.round((basic/26)*15/12): 0;
+  const cl       = clOn    ? Math.round((basic/26)*7/12) : 0;
+  const esiEE    = esicOn  ? Math.round(gross * 0.0075) : 0;
+  const pfEE     = pfOn    ? Math.round(basic * 0.12)   : 0;
+  const ctcPM    = gross + esiER + pfER + insurance + Math.round(bonus/12) + Math.round(gratuity/12) + el + cl;
+  const ctcPA    = ctcPM * 12;
+  const takeHome = gross - esiEE - pfEE;
+
+  set('dsal_gross',    gross);
+  set('dsal_esi_er',   esiER);
+  set('dsal_pf_er',    pfER);
+  set('dsal_insurance',insurance);
+  set('dsal_bonus',    Math.round(bonus/12));
+  set('dsal_gratuity', Math.round(gratuity/12));
+  set('dsal_pl',       el);
+  set('dsal_cl',       cl);
+  set('dsal_ctcpm',    ctcPM);
+  set('dsal_ctcpa',    ctcPA);
+  set('dsal_esi_ee',   esiEE);
+  set('dsal_pf_ee',    pfEE);
+  set('dsal_takehome', takeHome);
+
+  const fmt = (n) => n > 0 ? `₹${Math.round(n).toLocaleString('en-IN')}` : '—';
+  const el2 = document.getElementById('salaryPreviewDetail');
+  if (!el2) return;
+  el2.innerHTML=`<h4>💳 Live CTC Breakdown</h4>
+  <div class="salary-section-header">💵 Earnings</div>
+  <div class="salary-row"><span>Basic</span><span class="amount">${fmt(basic)}</span></div>
+  <div class="salary-row"><span>HRA</span><span class="amount">${fmt(hra)}</span></div>
+  <div class="salary-row"><span>Other Allowance</span><span class="amount">${fmt(other)}</span></div>
+  <div class="salary-row total"><span>Monthly Gross</span><span class="amount">${fmt(gross)}</span></div>
+  <div class="salary-section-header">🏢 Employer Contributions</div>
+  <div class="salary-row ${esicOn?'':'muted'}"><span>ESIC ER (3.25%)</span><span class="amount">${esicOn?fmt(esiER):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row ${pfOn?'':'muted'}"><span>PF ER (13%)</span><span class="amount">${pfOn?fmt(pfER):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row ${insurOn?'':'muted'}"><span>Insurance</span><span class="amount">${insurOn?fmt(insurance):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row ${bonusOn?'':'muted'}"><span>Bonus (8.33% monthly)</span><span class="amount">${bonusOn?fmt(Math.round(bonus/12)):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row ${gratOn?'':'muted'}"><span>Gratuity (4.81% monthly)</span><span class="amount">${gratOn?fmt(Math.round(gratuity/12)):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row ${elOn?'':'muted'}"><span>EL/PL (15 days monthly)</span><span class="amount">${elOn?fmt(el):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row ${clOn?'':'muted'}"><span>CL (7 days monthly)</span><span class="amount">${clOn?fmt(cl):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row total" style="background:var(--accent-lt);"><span>💼 CTC per Month</span><span class="amount" style="color:var(--accent);">${fmt(ctcPM)}</span></div>
+  <div class="salary-row total" style="background:var(--accent-lt);"><span>📅 CTC per Annum</span><span class="amount" style="color:var(--accent);">${fmt(ctcPA)}</span></div>
+  <div class="salary-section-header">✂️ Employee Deductions</div>
+  <div class="salary-row deduction ${esicOn?'':'muted'}"><span>ESIC EE (0.75%)</span><span class="amount">${esicOn?'−'+fmt(esiEE):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row deduction ${pfOn?'':'muted'}"><span>PF EE (12%)</span><span class="amount">${pfOn?'−'+fmt(pfEE):'<span style="color:var(--text4)">N/A</span>'}</span></div>
+  <div class="salary-row total" style="background:var(--green-lt);border-radius:8px;padding:12px;margin-top:6px;">
+    <span>🏠 Take Home Salary</span><span class="amount" style="color:var(--green);font-size:16px;">${fmt(takeHome)}</span>
+  </div>`;
+}
+
+async function saveDetailSalary(code, type) {
+  const g  = (id) => parseFloat(document.getElementById(id)?.value)||0;
+  const gs = (id) => document.getElementById(id)?.value||'';
+  const tog= (id) => document.getElementById(id)?.checked ?? true;
+  const basic=g('dsal_basic'), hra=g('dsal_hra'), other=g('dsal_other');
+  const gross=basic+hra+other;
+  const sheet=type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
+  const emp=sheet.find(e=>e['Enter Employee Code']===code);
+  if (emp) {
+    emp['Basic']=basic; emp['HRA']=hra; emp['other']=other;
+    emp['Monthly (Gross)']=gross;
+    emp['EPFO No.']=gs('dsal_epfo');
+    emp['ESIC No . (Previous/ Existing)']=gs('dsal_esic_no');
+    emp['ESI (Employers Contribution)-3.25%']=g('dsal_esi_er');
+    emp['PF (Employers Contribution)-13%']=g('dsal_pf_er');
+    emp['INSURANCE']=g('dsal_insurance');
+    emp['Bonus']=g('dsal_bonus');
+    emp['Gratutity']=g('dsal_gratuity');
+    emp['PL']=g('dsal_pl'); emp['cl']=g('dsal_cl');
+    emp['CTC (p.m.)']=g('dsal_ctcpm'); emp['CTC (p.a.)']=g('dsal_ctcpa');
+    emp['ESIC (Employee Deduction)-0.75%']=g('dsal_esi_ee');
+    emp['PF Deduction (Employee Deduction)-12%']=g('dsal_pf_ee');
+    emp['Take Home Salary']=g('dsal_takehome');
+    emp['Is ESIC Deducted']=tog('det_tog_esic')?'Yes':'No';
+    emp['Is PF Deducted']=tog('det_tog_pf')?'Yes':'No';
+    emp['Has Insurance']=tog('det_tog_insur')?'Yes':'No';
+    emp['Has Bonus']=tog('det_tog_bonus')?'Yes':'No';
+    emp['Has Gratuity']=tog('det_tog_grat')?'Yes':'No';
+    emp['Has EL']=tog('det_tog_el')?'Yes':'No';
+    emp['Has CL']=tog('det_tog_cl')?'Yes':'No';
+  }
+  if (APP.scriptUrl) { try { await postToScript({action:'saveSalary',empCode:code,type,...emp}); } catch(e) {} }
+  toast(`✅ Salary saved for ${emp?.Name}`,'success');
 }
 
 async function saveEmpSalary(code,type) {
@@ -1635,6 +1839,10 @@ function loadSalaryData() {
   const hasPF    = emp['Is PF Deducted']   !== 'No';
   const hasESIC  = emp['Is ESIC Deducted'] !== 'No';
   const hasInsur = emp['Has Insurance']    !== 'No';
+  const hasBonus = emp['Has Bonus']        !== 'No';
+  const hasGrat  = emp['Has Gratuity']     !== 'No';
+  const hasEL    = emp['Has EL']           !== 'No';
+  const hasCL    = emp['Has CL']           !== 'No';
 
   document.getElementById('salaryFormArea').innerHTML=`
 <div class="card">
@@ -1648,20 +1856,38 @@ function loadSalaryData() {
   <div class="card-body">
 
     <!-- TOGGLE CONTROLS -->
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;padding:14px;background:var(--surface3);border-radius:10px;">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);width:100%;margin-bottom:4px;">⚙️ Applicable Components</div>
+    <div style="margin-bottom:20px;padding:14px;background:var(--surface3);border-radius:10px;">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:10px;">⚙️ Applicable Benefits — Enable/Disable per Employee</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
         <input type="checkbox" id="tog_pf" ${hasPF?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
-        🏦 PF Applicable
+        🏦 PF
       </label>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
         <input type="checkbox" id="tog_esic" ${hasESIC?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
-        🏥 ESIC Applicable
+        🏥 ESIC
       </label>
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
         <input type="checkbox" id="tog_insur" ${hasInsur?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
-        🛡️ Insurance Applicable
+        🛡️ Insurance
       </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_bonus" ${hasBonus?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        🎁 Bonus
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_grat" ${hasGrat?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        🏠 Gratuity
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_el" ${hasEL?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        📅 EL (Earned Leave)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);background:var(--white);border:1.5px solid var(--border);border-radius:8px;padding:8px 14px;">
+        <input type="checkbox" id="tog_cl" ${hasCL?'checked':''} onchange="calcPageSalary()" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;">
+        📋 CL (Casual Leave)
+      </label>
+      </div>
     </div>
 
     <!-- SALARY INPUTS -->
@@ -1740,7 +1966,7 @@ function autoSplitGross() {
 
 function calcPageSalary() {
   const g    = (id) => parseFloat(document.getElementById(id)?.value)||0;
-  const tog  = (id) => document.getElementById(id)?.checked ?? true;
+  const tog  = (id) => { const el=document.getElementById(id); return el ? el.checked : true; };
 
   const basic     = g('psal_Basic');
   const hra       = g('psal_HRA');
@@ -1753,21 +1979,25 @@ function calcPageSalary() {
   const pfOn    = tog('tog_pf');
   const esicOn  = tog('tog_esic');
   const insurOn = tog('tog_insur');
+  const bonusOn = tog('tog_bonus');
+  const gratOn  = tog('tog_grat');
+  const elOn    = tog('tog_el');
+  const clOn    = tog('tog_cl');
 
   // Employer contributions
-  const pfER      = pfOn   ? Math.round(basic * 0.13)   : 0;
-  const esicER    = esicOn ? Math.round(totalGross * 0.0325) : 0;
-  const insurance = insurOn? 500 : 0;
-  const gratuity  = Math.round(basic * 0.0481);          // 4.81%
-  const bonus     = Math.round(basic * 0.0833);          // 8.33%
+  const pfER      = pfOn    ? Math.round(basic * 0.13)       : 0;
+  const esicER    = esicOn  ? Math.round(totalGross * 0.0325): 0;
+  const insurance = insurOn ? 500 : 0;
+  const gratuity  = gratOn  ? Math.round(basic * 0.0481)     : 0;
+  const bonus     = bonusOn ? Math.round(basic * 0.0833)     : 0;
 
   // Leave encashment (monthly provisioning)
-  const elMonthly = Math.round((basic/26) * 15 / 12);   // EL 15 days/year
-  const clMonthly = Math.round((basic/26) * 7  / 12);   // CL 7 days/year
+  const elMonthly = elOn ? Math.round((basic/26) * 15 / 12) : 0;
+  const clMonthly = clOn ? Math.round((basic/26) * 7  / 12) : 0;
 
   // Employee deductions
-  const pfEE   = pfOn   ? Math.round(basic * 0.12)       : 0;
-  const esicEE = esicOn ? Math.round(totalGross * 0.0075): 0;
+  const pfEE   = pfOn   ? Math.round(basic * 0.12)        : 0;
+  const esicEE = esicOn ? Math.round(totalGross * 0.0075) : 0;
 
   const ctcPM  = totalGross + pfER + esicER + insurance + Math.round(gratuity/12) + Math.round(bonus/12) + elMonthly + clMonthly;
   const ctcPA  = ctcPM * 12;
@@ -1792,10 +2022,10 @@ ${room>0?`<div class="salary-row"><span>Room Facility</span><span class="amount"
 <div class="salary-row ${pfOn?'':'muted'}"><span>PF Employer (13%)</span><span class="amount">${pfOn?fmt(pfER):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
 <div class="salary-row ${esicOn?'':'muted'}"><span>ESIC Employer (3.25%)</span><span class="amount">${esicOn?fmt(esicER):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
 <div class="salary-row ${insurOn?'':'muted'}"><span>Insurance Cost</span><span class="amount">${insurOn?fmt(insurance):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
-<div class="salary-row"><span>Gratuity @ 4.81% (monthly)</span><span class="amount">${fmt(Math.round(gratuity/12))}</span></div>
-<div class="salary-row"><span>Bonus @ 8.33% (monthly)</span><span class="amount">${fmt(Math.round(bonus/12))}</span></div>
-<div class="salary-row"><span>EL — 15 Days (monthly)</span><span class="amount">${fmt(elMonthly)}</span></div>
-<div class="salary-row"><span>CL — 7 Days (monthly)</span><span class="amount">${fmt(clMonthly)}</span></div>
+<div class="salary-row ${gratOn?'':'muted'}"><span>Gratuity @ 4.81% (monthly)</span><span class="amount">${gratOn?fmt(Math.round(gratuity/12)):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row ${bonusOn?'':'muted'}"><span>Bonus @ 8.33% (monthly)</span><span class="amount">${bonusOn?fmt(Math.round(bonus/12)):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row ${elOn?'':'muted'}"><span>EL — 15 Days (monthly)</span><span class="amount">${elOn?fmt(elMonthly):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
+<div class="salary-row ${clOn?'':'muted'}"><span>CL — 7 Days (monthly)</span><span class="amount">${clOn?fmt(clMonthly):'<span style="color:var(--text4)">Not Applicable</span>'}</span></div>
 <div class="salary-row total" style="background:var(--accent-lt);"><span>💼 CTC per Month</span><span class="amount" style="color:var(--accent);">${fmt(ctcPM)}</span></div>
 <div class="salary-row total" style="background:var(--accent-lt);"><span>📅 CTC per Annum</span><span class="amount" style="color:var(--accent);">${fmt(ctcPA)}</span></div>
 
@@ -1831,16 +2061,20 @@ async function savePageSalary(code,type) {
   const pfOn    = tog('tog_pf');
   const esicOn  = tog('tog_esic');
   const insurOn = tog('tog_insur');
+  const bonusOn = tog('tog_bonus');
+  const gratOn  = tog('tog_grat');
+  const elOn    = tog('tog_el');
+  const clOn    = tog('tog_cl');
 
-  const pfER      = pfOn   ? Math.round(basic * 0.13)       : 0;
-  const esicER    = esicOn ? Math.round(totalGross * 0.0325) : 0;
-  const insurance = insurOn? 500 : 0;
-  const gratuity  = Math.round(basic * 0.0481);
-  const bonus     = Math.round(basic * 0.0833);
-  const elMonthly = Math.round((basic/26)*15/12);
-  const clMonthly = Math.round((basic/26)*7/12);
-  const pfEE      = pfOn   ? Math.round(basic * 0.12)        : 0;
-  const esicEE    = esicOn ? Math.round(totalGross * 0.0075) : 0;
+  const pfER      = pfOn    ? Math.round(basic * 0.13)       : 0;
+  const esicER    = esicOn  ? Math.round(totalGross * 0.0325): 0;
+  const insurance = insurOn ? 500 : 0;
+  const gratuity  = gratOn  ? Math.round(basic * 0.0481)     : 0;
+  const bonus     = bonusOn ? Math.round(basic * 0.0833)     : 0;
+  const elMonthly = elOn    ? Math.round((basic/26)*15/12)   : 0;
+  const clMonthly = clOn    ? Math.round((basic/26)*7/12)    : 0;
+  const pfEE      = pfOn    ? Math.round(basic * 0.12)       : 0;
+  const esicEE    = esicOn  ? Math.round(totalGross * 0.0075): 0;
   const ctcPM     = totalGross + pfER + esicER + insurance + Math.round(gratuity/12) + Math.round(bonus/12) + elMonthly + clMonthly;
   const ctcPA     = ctcPM * 12;
   const takeHome  = totalGross - pfEE - esicEE;
@@ -1865,6 +2099,10 @@ async function savePageSalary(code,type) {
     emp['Is PF Deducted']=pfOn?'Yes':'No';
     emp['Is ESIC Deducted']=esicOn?'Yes':'No';
     emp['Has Insurance']=insurOn?'Yes':'No';
+    emp['Has Bonus']=bonusOn?'Yes':'No';
+    emp['Has Gratuity']=gratOn?'Yes':'No';
+    emp['Has EL']=elOn?'Yes':'No';
+    emp['Has CL']=clOn?'Yes':'No';
   }
   if (APP.scriptUrl) {
     try {
@@ -1960,10 +2198,16 @@ async function saveDocCell(code,type,field,el) {
 function renderBulkImport() {
   return `
 <div class="card mb-4">
-  <div class="card-header"><span class="card-title">⬇️ Download Template</span></div>
+  <div class="card-header"><span class="card-title">⬇️ Download Templates</span></div>
   <div class="card-body">
-    <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">Download the CSV template, fill in employee data matching the exact column headers, then upload below.</p>
-    <button class="btn btn-secondary" onclick="downloadTemplate()">⬇️ Download CSV Template</button>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">Download a template, fill in employee data matching the exact column headers, then upload below.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn btn-secondary" onclick="downloadTemplate()">⬇️ Basic Template (All Fields)</button>
+      <button class="btn btn-secondary" style="border-color:var(--accent);color:var(--accent);" onclick="downloadSalaryTemplate()">💰 Salary Import Template (Harsh Fields)</button>
+    </div>
+    <div style="margin-top:14px;padding:12px;background:var(--accent-lt);border:1.5px solid var(--accent-md);border-radius:8px;font-size:12px;color:var(--accent-dk);">
+      <strong>💡 Salary Template includes:</strong> EPFO No., ESIC No., Basic, HRA, Other, Monthly Gross, ESI Employer (3.25%), PF Employer (13%), Insurance, Bonus, Gratuity, PL, CL, CTC p.m., CTC p.a., ESIC Employee (0.75%), PF Employee (12%), Take Home Salary
+    </div>
   </div>
 </div>
 <div class="card">
@@ -1976,6 +2220,34 @@ function renderBulkImport() {
     <div id="csvPreview"></div>
   </div>
 </div>`;
+}
+
+function downloadSalaryTemplate() {
+  const salaryHeaders = [
+    'Enter Employee Code','Name','Employee Type',
+    'EPFO No.','ESIC No . (Previous/ Existing)',
+    'Basic','HRA','other','Monthly (Gross)',
+    'ESI (Employers Contribution)-3.25%','PF (Employers Contribution)-13%',
+    'INSURANCE','Bonus','Gratutity','PL','cl',
+    'CTC (p.m.)','CTC (p.a.)',
+    'ESIC (Employee Deduction)-0.75%','PF Deduction (Employee Deduction)-12%',
+    'Take Home Salary',
+    'Is PF Deducted','Is ESIC Deducted','Has Insurance','Has Bonus','Has Gratuity','Has EL','Has CL'
+  ];
+  // Sample row
+  const sampleRow = ['G1-001','Sample Employee','G1','EPFO123','ESIC456',
+    '25000','10000','2000','37000',
+    '1202','3250','500','2082','1202','481','224',
+    '45941','551294',
+    '277','3000','33723',
+    'Yes','Yes','Yes','Yes','Yes','Yes','Yes'
+  ];
+  const csv = 'data:text/csv;charset=utf-8,' + salaryHeaders.join(',') + '\n' + sampleRow.join(',') + '\n';
+  const link = document.createElement('a');
+  link.href = encodeURI(csv);
+  link.download = 'salary_import_template.csv';
+  link.click();
+  toast('Salary template downloaded','success');
 }
 
 function downloadTemplate() {
@@ -2115,21 +2387,29 @@ function exportCSV() {
 
 // ===================== POLICIES =====================
 function renderPolicies() {
-  const canAdd=APP.user?.role==='admin';
-  return `
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-  <p style="font-size:13px;color:var(--text3);">${APP.policies.length} policy documents available</p>
-  ${canAdd?`<button class="btn btn-primary" onclick="openAddPolicyModal()">➕ Add Policy</button>`:''}
-</div>
-<div class="policy-grid">
-  ${APP.policies.map(p=>`<div class="policy-card" onclick="window.open('${p.url}','_blank')">
-    <div class="pc-icon">${p.icon}</div>
-    <div class="pc-cat">${p.category}</div>
-    <div class="pc-name">${p.name}</div>
-    <div class="pc-desc">${p.description}</div>
-    <div style="margin-top:12px;font-size:12px;color:var(--accent);font-weight:600;">View Document →</div>
-  </div>`).join('')}
-</div>`;
+  const canAdd = APP.user?.role === 'admin';
+  const addBtn = canAdd ? '<button class="btn btn-primary" onclick="openAddPolicyModal()">➕ Add Policy</button>' : '';
+  let body = '';
+  if (APP.policies.length === 0) {
+    body = '<div class="empty-state"><div class="empty-icon">📜</div><h3>No policies yet</h3><p style="color:var(--text3);font-size:13px;">Admins can add company policies using the button above.</p></div>';
+  } else {
+    const cards = APP.policies.map(function(p) {
+      const delBtn = canAdd ? '<button onclick="event.stopPropagation();deletePolicy(' + p.id + ')" style="position:absolute;top:10px;right:10px;background:var(--red-lt);border:1.5px solid var(--red);color:var(--red);border-radius:6px;padding:3px 8px;font-size:11px;cursor:pointer;font-weight:600;" title="Remove Policy">✕</button>' : '';
+      return '<div class="policy-card" style="position:relative;" onclick="window.open(\'' + p.url + '\',\'_blank\')">' +
+        delBtn +
+        '<div class="pc-icon">' + p.icon + '</div>' +
+        '<div class="pc-cat">' + p.category + '</div>' +
+        '<div class="pc-name">' + p.name + '</div>' +
+        '<div class="pc-desc">' + p.description + '</div>' +
+        '<div style="margin-top:12px;font-size:12px;color:var(--accent);font-weight:600;">View Document →</div>' +
+        '</div>';
+    }).join('');
+    body = '<div class="policy-grid">' + cards + '</div>';
+  }
+  return '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">' +
+    '<p style="font-size:13px;color:var(--text3);">' + APP.policies.length + ' policy documents available</p>' +
+    addBtn +
+    '</div>' + body;
 }
 
 function openAddPolicyModal() {
@@ -2150,7 +2430,13 @@ function savePolicy() {
   const name=document.getElementById('pol_name').value;
   if (!name) { toast('Policy name required','error'); return; }
   APP.policies.push({id:Date.now(),name,category:document.getElementById('pol_cat').value,description:document.getElementById('pol_desc').value,url:document.getElementById('pol_url').value||'#',icon:document.getElementById('pol_icon').value||'📄'});
+  localStorage.setItem('hrc_policies', JSON.stringify(APP.policies));
   closeModal('addPolicyModal'); toast('Policy added','success'); navigateTo('policies');
+}
+function deletePolicy(id) {
+  APP.policies=APP.policies.filter(p=>p.id!==id);
+  localStorage.setItem('hrc_policies', JSON.stringify(APP.policies));
+  toast('Policy removed','success'); navigateTo('policies');
 }
 
 // ===================== USER MANAGEMENT =====================
@@ -2217,489 +2503,517 @@ function deleteUser(idx) { if (APP.users[idx].Username===APP.user?.username) { t
 
 // ===================== SETUP =====================
 const APPS_SCRIPT_CODE = `// ============================================================
-//  HR CENTRAL — COMPLETE APPS SCRIPT  v2.0
+//  HR CENTRAL — COMPLETE APPS SCRIPT  v3.0
 //  STEP 1: Paste this ENTIRE file into Apps Script editor
-//  STEP 2: Select "setupEverything" → click ▶ Run
-//  STEP 3: Deploy as Web App (Execute as: Me, Access: Anyone)
-//  STEP 4: Paste Web App URL into HR Central Setup page
+//  STEP 2: Select "setupEverything" function and click Run
+//  STEP 3: Deploy > New deployment > Web App
+//           Execute as: Me  |  Who has access: Anyone
+//  STEP 4: Paste the Web App URL into HR Central Setup page
 // ============================================================
 
-const SHEET_HEADERS = ["Sl No","Enter Employee Code","Name","Father/Husband Name","Employee Type","DOB(As per Adhar)","Date Of Joining","Marital Status","Contact Number","E-mail ID (Personal)","E-mail ID (Official)","Department","Designation","Reporting Supervisor","Aadhar","PAN","Bank Name","Bank Account No.","IFSC CODE","Upload Offer letter","Qualification","Gender","UAN No . (Previous/ Existing)","Medical Certificate","Age","Status","EPFO No.","ESIC No . (Previous/ Existing)","Basic","HRA","other","Med. Allow","Spl Alw","Misc Allow","Fixed Other All","Variable (p.a.)","Monthly (Gross)","ESI (Employers Contribution)-3.25%","PF (Employers Contribution)-13%","INSURANCE","Bonus","Gratutity","PL","cl","CTC (p.m.)","CTC (p.a.)","ESIC (Employee Deduction)-0.75%","PF Deduction (Employee Deduction)-12%","Take Home Salary","Personal Details","Form 26","ESI Form 1","Form 2 PF","Nomination Form-F Payment of Gratuity Act 1972","EPF-Form-11-Declaration Form","SIM","Laptop","Joining Report","Rules & Regulation 1st of jan 2026","Appointment Letter","Confirmation Letter","Service Record","Increment Letter 24-25","Promotion Letter","Employment History Sheet","JD","Master Task Sheet","KRA","KPI","DOB","DOJ","File Number","Date of Leaving (if Left)","Full & Final Process Completed","Relieving Letter Issued","Remarks","Source","ApprovedBy","CreatedAt"];
+// ── HEADERS — must match frontend exactly ──────────────────
+var SHEET_HEADERS = [
+  "Sl No","Enter Employee Code","Name","Father/Husband Name","Employee Type",
+  "DOB(As per Adhar)","Date Of Joining","Marital Status","Contact Number",
+  "E-mail ID (Personal)","E-mail ID (Official)","Department","Designation",
+  "Reporting Supervisor","Aadhar","PAN","Bank Name","Bank Account No.",
+  "IFSC CODE","Upload Offer letter","Qualification","Gender",
+  "UAN No . (Previous/ Existing)","Medical Certificate","Age","Status",
+  "EPFO No.","ESIC No . (Previous/ Existing)","Basic","HRA","other",
+  "Med. Allow","Spl Alw","Misc Allow","Fixed Other All","Variable (p.a.)",
+  "Monthly (Gross)","ESI (Employers Contribution)-3.25%",
+  "PF (Employers Contribution)-13%","INSURANCE","Bonus","Gratutity","PL","cl",
+  "CTC (p.m.)","CTC (p.a.)","ESIC (Employee Deduction)-0.75%",
+  "PF Deduction (Employee Deduction)-12%","Take Home Salary",
+  "Is PF Deducted","Is ESIC Deducted","Has Insurance",
+  "Has Bonus","Has Gratuity","Has EL","Has CL",
+  "Personal Details","Form 26","ESI Form 1","Form 2 PF",
+  "Nomination Form-F Payment of Gratuity Act 1972",
+  "EPF-Form-11-Declaration Form","SIM","Laptop","Joining Report",
+  "Rules & Regulation 1st of jan 2026","Appointment Letter",
+  "Confirmation Letter","Service Record","Increment Letter 24-25",
+  "Promotion Letter","Employment History Sheet","JD","Master Task Sheet",
+  "KRA","KPI","DOB","DOJ","File Number","Date of Leaving (if Left)",
+  "Full & Final Process Completed","Relieving Letter Issued","Remarks",
+  "Source","ApprovedBy","CreatedAt"
+];
 
-function doGet(e) {
-  const p = e.parameter, action = p.action;
-  let result;
-  try {
-    if (action==='ping') result={status:'ok',time:new Date().toISOString()};
-    else if (action==='verifyLogin') result=verifyLogin(p.username,p.password);
-    else if (action==='getAllData') result=getAllData(p.formTab);
-    else result={error:'Unknown action'};
-  } catch(err) { result={error:err.message}; }
-  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
-}
+var LOG_HEADERS  = ["FormRowID","Status","EmpCode","AssignedType","ApprovedBy","Timestamp","Reason"];
+var USER_HEADERS = ["Username","Password","Role","DisplayName","Active"];
+var VALID_TYPES  = ["G1","G2","G3"];
 
-function doPost(e) {
-  let result;
-  try {
-    const body=JSON.parse(e.postData.contents), action=body.action;
-    if (action==='approveForm') result=approveForm(body);
-    else if (action==='rejectForm') result=rejectForm(body);
-    else if (action==='addEmployee') result=addEmployee(body);
-    else if (action==='saveSalary') result=saveSalary(body);
-    else if (action==='updateDocField') result=updateDocField(body);
-    else if (action==='updateDocFields') result=updateDocFields(body);
-    else if (action==='bulkImport') result=bulkImport(body);
-    else if (action==='addUser') result=addUser(body);
-    else if (action==='updateEmpStatus') result=updateEmpStatus(body);
-    else result={error:'Unknown action'};
-  } catch(err) { result={error:err.message}; }
-  return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
-}
-
-function verifyLogin(username,password) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName('Users');
-  if (!sheet) return {success:false,message:'Users tab not found'};
-  const data=sheet.getDataRange().getValues();
-  const headers=data[0];
-  for (let i=1;i<data.length;i++) {
-    const row=rowToObject(headers,data[i]);
-    if (row.Username&&row.Username.toString().toLowerCase()===username.toLowerCase()&&row.Password&&row.Password.toString()===password&&row.Active!=='No') {
-      return {success:true,user:{username:row.Username,role:row.Role,displayName:row.DisplayName}};
-    }
-  }
-  return {success:false,message:'Invalid credentials'};
-}
-
-function getAllData(formTab) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  return {
-    g1:sheetToArray(ss.getSheetByName('G1')),
-    g2:sheetToArray(ss.getSheetByName('G2')),
-    g3:sheetToArray(ss.getSheetByName('G3')),
-    formInbox:getFormInboxData(ss,formTab||'Form Responses 1'),
-    users:sheetToArray(ss.getSheetByName('Users'))
-  };
-}
-
-function sheetToArray(sheet) {
-  if (!sheet) return [];
-  const data=sheet.getDataRange().getValues();
-  if (data.length<2) return [];
-  const headers=data[0];
-  return data.slice(1).map(r=>rowToObject(headers,r)).filter(r=>r['Enter Employee Code']||r['Name']);
-}
-
-function getFormInboxData(ss,tabName) {
-  const formSheet=ss.getSheetByName(tabName);
-  const logSheet=ss.getSheetByName('FormInboxLog');
-  if (!formSheet) return [];
-  const formData=formSheet.getDataRange().getValues();
-  if (formData.length<2) return [];
-  const formHeaders=formData[0];
-  const logData=logSheet?logSheet.getDataRange().getValues():[];
-  const logHeaders=logData.length>0?logData[0]:[];
-  const logMap={};
-  for (let i=1;i<logData.length;i++) {
-    const row=rowToObject(logHeaders,logData[i]);
-    if (row.FormRowID) logMap[row.FormRowID]=row;
-  }
-  return formData.slice(1).map((row,idx)=>{
-    const obj=rowToObject(formHeaders,row);
-    const rowId='FR'+String(idx+1).padStart(3,'0');
-    const log=logMap[rowId]||{};
-    return {...obj,id:rowId,status:log.Status||'pending',empCode:log.EmpCode||null,rejectReason:log.Reason||''};
-  });
-}
-
-function approveForm(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(body.type||'G1');
-  if (!sheet) return {success:false,error:body.type+' tab not found'};
-  sheet.appendRow(SHEET_HEADERS.map(h=>body[h]!==undefined?body[h]:''));
-  const logSheet=ss.getSheetByName('FormInboxLog');
-  if (logSheet) logSheet.appendRow([body.formRowId,'approved',body['Enter Employee Code'],body.type,body.approvedBy||'',new Date().toISOString(),'']);
-  return {success:true};
-}
-
-function rejectForm(body) {
-  const logSheet=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('FormInboxLog');
-  if (logSheet) logSheet.appendRow([body.formRowId,'rejected','','',body.rejectedBy||'',new Date().toISOString(),body.reason||'']);
-  return {success:true};
-}
-
-function addEmployee(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(body['Employee Type']||'G1');
-  if (!sheet) return {success:false};
-  sheet.appendRow(SHEET_HEADERS.map(h=>body[h]!==undefined?body[h]:''));
-  return {success:true};
-}
-
-function updateEmpStatus(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(body.type);
-  if (!sheet) return {success:false,error:body.type+' tab not found'};
-  const headers=getSheetHeaders(sheet);
-  const statusColIdx=headers.indexOf('Status');
-  if (statusColIdx<0) return {success:false,error:'Status column not found'};
-  const rowIdx=findEmployeeRow(sheet,body.empCode);
-  if (rowIdx<0) return {success:false,error:'Employee not found'};
-  sheet.getRange(rowIdx+1,statusColIdx+1).setValue(body.status);
-  return {success:true};
-}
-
-function saveSalary(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(body.type);
-  if (!sheet) return {success:false};
-  const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);
-  if (rowIdx<0) return {success:false,error:'Employee not found'};
-  const salaryMap={'Basic':body.basic,'HRA':body.hra,'other':body.other,'Med. Allow':body.medAllow,'Spl Alw':body.splAlw,'Misc Allow':body.miscAllow,'Fixed Other All':body.fixedOther,'Variable (p.a.)':body.variable,'Monthly (Gross)':body.gross,'ESI (Employers Contribution)-3.25%':body.esiER,'PF (Employers Contribution)-13%':body.pfER,'INSURANCE':500,'Bonus':body.bonus,'Gratutity':body.gratuity,'PL':body.pl,'cl':body.cl,'CTC (p.m.)':body.ctcPM,'CTC (p.a.)':body.ctcPA,'ESIC (Employee Deduction)-0.75%':body.esiEE,'PF Deduction (Employee Deduction)-12%':body.pfEE,'Take Home Salary':body.takeHome,'Status':body.status,'EPFO No.':body.epfoNo,'ESIC No . (Previous/ Existing)':body.esicNo};
-  Object.entries(salaryMap).forEach(([field,value])=>{
-    const colIdx=headers.indexOf(field);
-    if (colIdx>=0) sheet.getRange(rowIdx+1,colIdx+1).setValue(value);
-  });
-  return {success:true};
-}
-
-function updateDocField(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(body.type);
-  if (!sheet) return {success:false};
-  const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);
-  if (rowIdx<0) return {success:false};
-  const colIdx=headers.indexOf(body.fieldName);
-  if (colIdx>=0) sheet.getRange(rowIdx+1,colIdx+1).setValue(body.value);
-  return {success:true};
-}
-
-function updateDocFields(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(body.type);
-  if (!sheet) return {success:false};
-  const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);
-  if (rowIdx<0) return {success:false};
-  const docFields=["Personal Details","Form 26","ESI Form 1","Form 2 PF","Nomination Form-F Payment of Gratuity Act 1972","EPF-Form-11-Declaration Form","SIM","Laptop","Joining Report","Rules & Regulation 1st of jan 2026","Appointment Letter","Confirmation Letter","Service Record","Increment Letter 24-25","Promotion Letter","Employment History Sheet","JD","Master Task Sheet","KRA","KPI","DOB","DOJ","File Number","Date of Leaving (if Left)","Full & Final Process Completed","Relieving Letter Issued","Remarks"];
-  docFields.forEach(field=>{
-    const colIdx=headers.indexOf(field);
-    if (colIdx>=0&&body.docs&&body.docs[field]!==undefined) sheet.getRange(rowIdx+1,colIdx+1).setValue(body.docs[field]);
-  });
-  return {success:true};
-}
-
-function bulkImport(body) {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  let success=0;
-  (body.employees||[]).forEach(emp=>{
-    const type=emp['Employee Type'];
-    if (!type||!['G1','G2','G3'].includes(type)) return;
-    const sheet=ss.getSheetByName(type);
-    if (!sheet) return;
-    sheet.appendRow(SHEET_HEADERS.map(h=>emp[h]||''));
-    success++;
-  });
-  return {success:true,count:success};
-}
-
-function addUser(body) {
-  const sheet=SpreadsheetApp.getActiveSpreadsheet().getSheetByName('Users');
-  if (!sheet) return {success:false};
-  sheet.appendRow([body.username,body.password,body.role,body.displayName,'Yes']);
-  return {success:true};
-}
-
-const LOG_HEADERS  = ["FormRowID","Status","EmpCode","AssignedType","ApprovedBy","Timestamp","Reason"];
-const USER_HEADERS = ["Username","Password","Role","DisplayName","Active"];
-const VALID_TYPES  = ["G1","G2","G3"];
-
-// ── 🚀 RUN THIS FIRST — auto-creates ALL sheets, headers, default users ──
+// ── SETUP — RUN THIS FIRST ─────────────────────────────────
 function setupEverything() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const log = [];
-  VALID_TYPES.forEach(name => {
-    let sheet = ss.getSheetByName(name);
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var log = [];
+  var i, name, sheet, hr;
+
+  for (i = 0; i < VALID_TYPES.length; i++) {
+    name = VALID_TYPES[i];
+    sheet = ss.getSheetByName(name);
     if (!sheet) { sheet = ss.insertSheet(name); log.push("CREATED: " + name); }
     else { log.push("EXISTS: " + name); }
-    const cur = sheet.getLastColumn() > 0 ? sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0] : [];
-    if (cur.join("|") !== SHEET_HEADERS.join("|")) {
-      sheet.getRange(1,1,1,SHEET_HEADERS.length).setValues([SHEET_HEADERS]);
-      const hr = sheet.getRange(1,1,1,SHEET_HEADERS.length);
+    var currentHeaders = sheet.getLastColumn() > 0
+      ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : [];
+    if (currentHeaders.join("|") !== SHEET_HEADERS.join("|")) {
+      sheet.getRange(1, 1, 1, SHEET_HEADERS.length).setValues([SHEET_HEADERS]);
+      hr = sheet.getRange(1, 1, 1, SHEET_HEADERS.length);
       hr.setFontWeight("bold").setBackground("#2a7d6f").setFontColor("#ffffff").setWrap(false);
       sheet.setFrozenRows(1);
-      log.push("  → Headers written: " + name);
+      log.push("  headers written for " + name);
+    } else {
+      log.push("  headers already correct for " + name);
     }
-  });
-  let logSheet = ss.getSheetByName("FormInboxLog");
-  if (!logSheet) { logSheet = ss.insertSheet("FormInboxLog"); log.push("CREATED: FormInboxLog"); }
-  if (logSheet.getLastColumn() === 0) {
-    logSheet.getRange(1,1,1,LOG_HEADERS.length).setValues([LOG_HEADERS]);
-    logSheet.getRange(1,1,1,LOG_HEADERS.length).setFontWeight("bold").setBackground("#1f5c52").setFontColor("#ffffff");
-    logSheet.setFrozenRows(1); log.push("  → Headers written: FormInboxLog");
   }
-  let usersSheet = ss.getSheetByName("Users");
+
+  var logSheet = ss.getSheetByName("FormInboxLog");
+  if (!logSheet) { logSheet = ss.insertSheet("FormInboxLog"); log.push("CREATED: FormInboxLog"); }
+  else { log.push("EXISTS: FormInboxLog"); }
+  if (logSheet.getLastColumn() === 0) {
+    logSheet.getRange(1, 1, 1, LOG_HEADERS.length).setValues([LOG_HEADERS]);
+    logSheet.getRange(1, 1, 1, LOG_HEADERS.length).setFontWeight("bold").setBackground("#1f5c52").setFontColor("#ffffff");
+    logSheet.setFrozenRows(1);
+  }
+
+  var usersSheet = ss.getSheetByName("Users");
   if (!usersSheet) { usersSheet = ss.insertSheet("Users"); log.push("CREATED: Users"); }
+  else { log.push("EXISTS: Users"); }
   if (usersSheet.getLastRow() === 0) {
-    usersSheet.getRange(1,1,1,USER_HEADERS.length).setValues([USER_HEADERS]);
-    usersSheet.getRange(1,1,1,USER_HEADERS.length).setFontWeight("bold").setBackground("#1f5c52").setFontColor("#ffffff");
+    usersSheet.getRange(1, 1, 1, USER_HEADERS.length).setValues([USER_HEADERS]);
+    usersSheet.getRange(1, 1, 1, USER_HEADERS.length).setFontWeight("bold").setBackground("#1f5c52").setFontColor("#ffffff");
     usersSheet.setFrozenRows(1);
-    usersSheet.getRange(2,1,4,5).setValues([
+    usersSheet.getRange(2, 1, 4, 5).setValues([
       ["admin","Admin@123","admin","Administrator","Yes"],
       ["harsh","Harsh@123","hr","Harsh Kumar","Yes"],
       ["nupur","Nupur@123","doc","Nupur Pandey","Yes"],
       ["emp","Emp@123","emp","Employee","Yes"]
     ]);
-    log.push("  → Headers + 4 default users written: Users");
+    log.push("  default users seeded");
+  } else {
+    log.push("  Users already has data - skipped");
   }
-  let settingsSheet = ss.getSheetByName("Settings");
+
+  var settingsSheet = ss.getSheetByName("Settings");
   if (!settingsSheet) {
     settingsSheet = ss.insertSheet("Settings");
-    settingsSheet.getRange(1,1,3,2).setValues([["Key","Value"],["companyName","HR Central"],["formTab","Form Responses 1"]]);
-    settingsSheet.getRange(1,1,1,2).setFontWeight("bold").setBackground("#1f5c52").setFontColor("#ffffff");
+    settingsSheet.getRange(1, 1, 3, 2).setValues([["Key","Value"],["companyName","HR Central"],["formTab","Form Responses 1"]]);
+    settingsSheet.getRange(1, 1, 1, 2).setFontWeight("bold").setBackground("#1f5c52").setFontColor("#ffffff");
     log.push("CREATED: Settings");
+  } else {
+    log.push("EXISTS: Settings");
   }
-  try { const s1=ss.getSheetByName("Sheet1"); if(s1&&ss.getSheets().length>1){ss.deleteSheet(s1);log.push("DELETED: Sheet1");} } catch(e){}
-  Logger.log("=== Setup Complete ===\n"+log.join("\n"));
-  SpreadsheetApp.getUi().alert("✅ Setup Complete!\n\n"+log.join("\n")+"\n\n👉 Now deploy as Web App:\n   Deploy → New deployment → Web App\n   Execute as: Me | Access: Anyone\n   Copy the URL into HR Central Setup page");
+
+  try {
+    var sheet1 = ss.getSheetByName("Sheet1");
+    if (sheet1 && ss.getSheets().length > 1) { ss.deleteSheet(sheet1); log.push("DELETED default Sheet1"); }
+  } catch(e) {}
+
+  Logger.log("Setup: " + log.join(", "));
+  SpreadsheetApp.getUi().alert(
+    "Setup Complete!" +
+    "\n\n" + log.join("\n") +
+    "\n\nNext step:" +
+    "\nDeploy > New deployment > Web App" +
+    "\nExecute as: Me" +
+    "\nWho has access: Anyone" +
+    "\nCopy the Web App URL into HR Central Setup page"
+  );
 }
 
+// ── DIAGNOSTIC ─────────────────────────────────────────────
 function checkSetup() {
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const lines=["=== HR Central Health Check ===",""];
-  ["G1","G2","G3","FormInboxLog","Users","Settings"].forEach(name=>{
-    const s=ss.getSheetByName(name);
-    lines.push(s?(s.getLastColumn()>0?"✅ ":"⚠️ EMPTY ")+name+" — "+s.getLastColumn()+" cols, "+s.getLastRow()+" rows":"❌ "+name+" — NOT FOUND → run setupEverything()");
-  });
-  lines.push("","All tabs: "+ss.getSheets().map(s=>s.getName()).join(", "));
-  const g1=ss.getSheetByName("G1");
-  if(g1&&g1.getLastColumn()>0){
-    const actual=g1.getRange(1,1,1,g1.getLastColumn()).getValues()[0];
-    const missing=SHEET_HEADERS.filter(h=>!actual.includes(h));
-    lines.push(missing.length>0?"⚠️ G1 missing: "+missing.join(", "):"✅ G1 headers OK ("+actual.length+"/"+SHEET_HEADERS.length+")");
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var lines = ["=== HR Central Health Check ===", ""];
+  var required = ["G1","G2","G3","FormInboxLog","Users","Settings"];
+  var i, s;
+  for (i = 0; i < required.length; i++) {
+    s = ss.getSheetByName(required[i]);
+    if (s) lines.push("OK " + required[i] + " - " + s.getLastColumn() + " cols, " + s.getLastRow() + " rows");
+    else lines.push("MISSING " + required[i] + " - run setupEverything()");
   }
-  const result=lines.join("\n");
+  lines.push("");
+  lines.push("All tabs: " + ss.getSheets().map(function(sh){ return sh.getName(); }).join(", "));
+  var g1 = ss.getSheetByName("G1");
+  if (g1 && g1.getLastColumn() > 0) {
+    var actual = g1.getRange(1, 1, 1, g1.getLastColumn()).getValues()[0];
+    var missing = [];
+    for (i = 0; i < SHEET_HEADERS.length; i++) {
+      if (actual.indexOf(SHEET_HEADERS[i]) < 0) missing.push(SHEET_HEADERS[i]);
+    }
+    lines.push(missing.length > 0
+      ? "WARNING G1 missing: " + missing.join(", ")
+      : "OK G1 headers correct (" + actual.length + "/" + SHEET_HEADERS.length + ")");
+  }
+  var result = lines.join("\n");
   Logger.log(result);
   SpreadsheetApp.getUi().alert(result);
 }
 
-function testFullFlow() {
-  const results=[];
-  ["G1","G2","G3","FormInboxLog","Users","Settings"].forEach(name=>{
-    try{const s=getSheet(name);results.push("✅ "+name+" ("+s.getLastColumn()+" cols)");}catch(e){results.push("❌ "+e.message);}
-  });
-  try{const r=verifyLogin("admin","Admin@123");results.push(r.success?"✅ Login OK: admin="+r.user.role:"❌ Login FAILED: "+r.message);}catch(e){results.push("❌ Login error: "+e.message);}
-  try{const d=getAllData("Form Responses 1");results.push("✅ getAllData: G1="+d.g1.length+" G2="+d.g2.length+" G3="+d.g3.length);}catch(e){results.push("❌ getAllData: "+e.message);}
-  try{
-    const testEmp={"Employee Type":"G1","Enter Employee Code":"TEST-001","Name":"Test Employee","Status":"Active","Source":"Test","CreatedAt":new Date().toISOString()};
-    const ar=addEmployee(testEmp);results.push(ar.success?"✅ addEmployee works":"❌ addEmployee failed");
-    const sheet=getSheet("G1");const ri=findEmployeeRow(sheet,"TEST-001");
-    results.push(ri>0?"✅ findEmployeeRow works (row "+(ri+1)+")":"❌ findEmployeeRow failed");
-    if(ri>0){sheet.deleteRow(ri+1);results.push("✅ Test row cleaned up");}
-  }catch(e){results.push("❌ addEmployee error: "+e.message);}
-  const out="=== Full Flow Test ===\n\n"+results.join("\n");
-  Logger.log(out);SpreadsheetApp.getUi().alert(out);
-}
-
-// ── SAFE HELPERS ──
-function getSheet(name){
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const sheet=ss.getSheetByName(name);
-  if(!sheet){const all=ss.getSheets().map(s=>s.getName()).join(", ");throw new Error('Sheet "'+name+'" not found. Available: '+all+'. Run setupEverything() first.');}
+// ── HELPERS ────────────────────────────────────────────────
+function getSheet(name) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) throw new Error("Sheet not found: " + name + ". Run setupEverything() first.");
   return sheet;
 }
-function getSheetHeaders(sheet){
-  if(!sheet) throw new Error("getSheetHeaders: sheet is null");
-  const lastCol=sheet.getLastColumn();
-  if(lastCol===0){sheet.getRange(1,1,1,SHEET_HEADERS.length).setValues([SHEET_HEADERS]);return SHEET_HEADERS;}
-  return sheet.getRange(1,1,1,lastCol).getValues()[0];
+
+function getSheetHeaders(sheet) {
+  if (!sheet) throw new Error("getSheetHeaders: sheet is null");
+  if (sheet.getLastColumn() === 0) {
+    sheet.getRange(1, 1, 1, SHEET_HEADERS.length).setValues([SHEET_HEADERS]);
+    return SHEET_HEADERS;
+  }
+  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
 }
-function rowToObject(headers,row){const obj={};headers.forEach((h,i)=>{obj[h]=row[i]!==undefined?row[i]:"";});return obj;}
-function findEmployeeRow(sheet,empCode){
-  if(!sheet||!empCode) return -1;
-  const lastRow=sheet.getLastRow();if(lastRow<2) return -1;
-  const data=sheet.getRange(1,1,lastRow,sheet.getLastColumn()).getValues();
-  const headers=data[0];const codeCol=headers.indexOf("Enter Employee Code");if(codeCol<0) return -1;
-  for(let i=1;i<data.length;i++){if(String(data[i][codeCol]).trim()===String(empCode).trim()) return i;}
+
+function rowToObject(headers, row) {
+  var obj = {}, i;
+  for (i = 0; i < headers.length; i++) {
+    obj[headers[i]] = row[i] !== undefined ? row[i] : "";
+  }
+  return obj;
+}
+
+function findEmployeeRow(sheet, empCode) {
+  if (!sheet || !empCode) return -1;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return -1;
+  var data = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
+  var codeCol = data[0].indexOf("Enter Employee Code");
+  if (codeCol < 0) return -1;
+  var i;
+  for (i = 1; i < data.length; i++) {
+    if (String(data[i][codeCol]).trim() === String(empCode).trim()) return i;
+  }
   return -1;
 }
-function sheetToArray(sheetName){
-  let sheet;try{sheet=getSheet(sheetName);}catch(e){return [];}
-  const lastRow=sheet.getLastRow(),lastCol=sheet.getLastColumn();
-  if(lastRow<2||lastCol===0) return [];
-  const data=sheet.getRange(1,1,lastRow,lastCol).getValues();
-  const headers=data[0];
-  return data.slice(1).map(r=>rowToObject(headers,r)).filter(r=>String(r["Enter Employee Code"]||"").trim()!==""||String(r["Name"]||"").trim()!=="");
-}
-function corsOutput(data){return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);}
 
-// ── GET ──
-function doGet(e){
-  const p=e.parameter||{};let result;
-  try{
-    switch(p.action||""){
-      case "ping": result={status:"ok",time:new Date().toISOString(),version:"2.0"};break;
-      case "verifyLogin": result=verifyLogin(p.username||"",p.password||"");break;
-      case "getAllData": result=getAllData(p.formTab||"Form Responses 1");break;
-      case "getFormInbox": result={formInbox:getFormInboxData(p.formTab||"Form Responses 1")};break;
-      default: result={error:"Unknown action: "+(p.action||"")};
-    }
-  }catch(err){result={error:err.message};}
-  return corsOutput(result);
-}
-
-// ── POST ──
-function doPost(e){
-  let result;
-  try{
-    const body=JSON.parse(e.postData.contents||"{}");
-    switch(body.action||""){
-      case "approveForm":     result=approveForm(body);break;
-      case "rejectForm":      result=rejectForm(body);break;
-      case "addEmployee":     result=addEmployee(body);break;
-      case "updateBasicInfo": result=updateBasicInfo(body);break;
-      case "saveSalary":      result=saveSalary(body);break;
-      case "updateDocField":  result=updateDocField(body);break;
-      case "updateDocFields": result=updateDocFields(body);break;
-      case "bulkImport":      result=bulkImport(body);break;
-      case "addUser":         result=addUser(body);break;
-      default: result={error:"Unknown action: "+(body.action||"")};
-    }
-  }catch(err){result={error:err.message};}
-  return corsOutput(result);
-}
-
-// ── AUTH ──
-function verifyLogin(username,password){
-  if(!username||!password) return {success:false,message:"Credentials required"};
-  const sheet=getSheet("Users");const lastRow=sheet.getLastRow();
-  if(lastRow<2) return {success:false,message:"No users found — run setupEverything()"};
-  const data=sheet.getRange(1,1,lastRow,sheet.getLastColumn()).getValues();
-  const headers=data[0];
-  for(let i=1;i<data.length;i++){
-    const row=rowToObject(headers,data[i]);
-    if(String(row.Username||"").toLowerCase()===username.toLowerCase()&&String(row.Password||"")===password&&String(row.Active||"Yes")!=="No"){
-      return {success:true,user:{username:row.Username,role:row.Role,displayName:row.DisplayName}};
+function sheetToArray(sheetName) {
+  var sheet;
+  try { sheet = getSheet(sheetName); } catch(e) { return []; }
+  var lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol === 0) return [];
+  var data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headers = data[0], result = [], i, obj;
+  for (i = 1; i < data.length; i++) {
+    obj = rowToObject(headers, data[i]);
+    if (String(obj["Enter Employee Code"] || "").trim() !== "" || String(obj["Name"] || "").trim() !== "") {
+      result.push(obj);
     }
   }
-  return {success:false,message:"Invalid credentials"};
+  return result;
 }
 
-// ── GET ALL DATA ──
-function getAllData(formTab){
-  return {g1:sheetToArray("G1"),g2:sheetToArray("G2"),g3:sheetToArray("G3"),formInbox:getFormInboxData(formTab||"Form Responses 1"),users:sheetToArray("Users")};
+function corsOutput(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
 }
 
-// ── FORM INBOX ──
-function getFormInboxData(tabName){
-  const ss=SpreadsheetApp.getActiveSpreadsheet();
-  const formSheet=ss.getSheetByName(tabName);if(!formSheet) return [];
-  const lastRow=formSheet.getLastRow(),lastCol=formSheet.getLastColumn();
-  if(lastRow<2||lastCol===0) return [];
-  const formData=formSheet.getRange(1,1,lastRow,lastCol).getValues();
-  const formHeaders=formData[0];
-  const logMap={};
-  try{
-    const logSheet=ss.getSheetByName("FormInboxLog");
-    if(logSheet&&logSheet.getLastRow()>=2){
-      const logData=logSheet.getRange(1,1,logSheet.getLastRow(),logSheet.getLastColumn()).getValues();
-      const logHeaders=logData[0];
-      for(let i=1;i<logData.length;i++){const row=rowToObject(logHeaders,logData[i]);if(row.FormRowID) logMap[String(row.FormRowID)]=row;}
+// ── GET HANDLER ────────────────────────────────────────────
+function doGet(e) {
+  var p = e.parameter || {}, action = p.action || "", result;
+  try {
+    if      (action === "ping")         result = { status: "ok", time: new Date().toISOString(), version: "3.0" };
+    else if (action === "verifyLogin")  result = verifyLogin(p.username || "", p.password || "");
+    else if (action === "getAllData")   result = getAllData(p.formTab || "Form Responses 1");
+    else if (action === "getFormInbox") result = { formInbox: getFormInboxData(p.formTab || "Form Responses 1") };
+    else                                result = { error: "Unknown action: " + action };
+  } catch(err) { result = { error: err.message }; }
+  return corsOutput(result);
+}
+
+// ── POST HANDLER ───────────────────────────────────────────
+function doPost(e) {
+  var result;
+  try {
+    var body = JSON.parse(e.postData.contents || "{}");
+    var action = body.action || "";
+    if      (action === "approveForm")     result = approveForm(body);
+    else if (action === "rejectForm")      result = rejectForm(body);
+    else if (action === "addEmployee")     result = addEmployee(body);
+    else if (action === "updateBasicInfo") result = updateBasicInfo(body);
+    else if (action === "saveSalary")      result = saveSalary(body);
+    else if (action === "updateDocField")  result = updateDocField(body);
+    else if (action === "updateDocFields") result = updateDocFields(body);
+    else if (action === "updateEmpStatus") result = updateEmpStatus(body);
+    else if (action === "bulkImport")      result = bulkImport(body);
+    else if (action === "addUser")         result = addUser(body);
+    else result = { error: "Unknown action: " + action };
+  } catch(err) { result = { error: err.message }; }
+  return corsOutput(result);
+}
+
+// ── AUTH ───────────────────────────────────────────────────
+function verifyLogin(username, password) {
+  if (!username || !password) return { success: false, message: "Username and password required" };
+  var sheet = getSheet("Users"), lastRow = sheet.getLastRow();
+  if (lastRow < 2) return { success: false, message: "No users found" };
+  var data = sheet.getRange(1, 1, lastRow, sheet.getLastColumn()).getValues();
+  var headers = data[0], i, row;
+  for (i = 1; i < data.length; i++) {
+    row = rowToObject(headers, data[i]);
+    if (String(row.Username || "").toLowerCase() === username.toLowerCase() &&
+        String(row.Password || "") === password &&
+        String(row.Active || "Yes") !== "No") {
+      return { success: true, user: { username: row.Username, role: row.Role, displayName: row.DisplayName } };
     }
-  }catch(e){}
-  return formData.slice(1).map((row,idx)=>{
-    const obj=rowToObject(formHeaders,row);
-    const rowId="FR"+String(idx+1).padStart(3,"0");
-    const log=logMap[rowId]||{};
-    return {...obj,id:rowId,status:String(log.Status||"pending").toLowerCase(),empCode:log.EmpCode||null,rejectReason:log.Reason||""};
-  });
+  }
+  return { success: false, message: "Invalid credentials" };
 }
 
-// ── APPROVE FORM ──
-function approveForm(body){
-  const type=body.type||body["Employee Type"];
-  if(!VALID_TYPES.includes(type)) return {success:false,error:"Invalid type: "+type};
-  const sheet=getSheet(type);
-  sheet.appendRow(SHEET_HEADERS.map(h=>(body[h]!==undefined&&body[h]!==null)?body[h]:""));
-  try{const ls=getSheet("FormInboxLog");ls.appendRow([body.formRowId||"","approved",body["Enter Employee Code"]||"",type,body.approvedBy||"",new Date().toISOString(),""]);} catch(e){}
-  return {success:true,empCode:body["Enter Employee Code"]};
+// ── GET ALL DATA ───────────────────────────────────────────
+function getAllData(formTab) {
+  return {
+    g1:        sheetToArray("G1"),
+    g2:        sheetToArray("G2"),
+    g3:        sheetToArray("G3"),
+    formInbox: getFormInboxData(formTab || "Form Responses 1"),
+    users:     sheetToArray("Users")
+  };
 }
 
-// ── REJECT FORM ──
-function rejectForm(body){
-  try{const ls=getSheet("FormInboxLog");ls.appendRow([body.formRowId||"","rejected","","",body.rejectedBy||"",new Date().toISOString(),body.reason||""]);}catch(e){}
-  return {success:true};
+// ── FORM INBOX ─────────────────────────────────────────────
+function getFormInboxData(tabName) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var formSheet = ss.getSheetByName(tabName);
+  if (!formSheet) return [];
+  var lastRow = formSheet.getLastRow(), lastCol = formSheet.getLastColumn();
+  if (lastRow < 2 || lastCol === 0) return [];
+  var formData = formSheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var formHeaders = formData[0], logMap = {}, i, r, obj, rowId, log;
+  try {
+    var logSheet = ss.getSheetByName("FormInboxLog");
+    if (logSheet && logSheet.getLastRow() >= 2) {
+      var logData = logSheet.getRange(1, 1, logSheet.getLastRow(), logSheet.getLastColumn()).getValues();
+      var lh = logData[0];
+      for (i = 1; i < logData.length; i++) {
+        r = rowToObject(lh, logData[i]);
+        if (r.FormRowID) logMap[String(r.FormRowID)] = r;
+      }
+    }
+  } catch(e) {}
+  var result = [];
+  for (i = 1; i < formData.length; i++) {
+    obj = rowToObject(formHeaders, formData[i]);
+    rowId = "FR" + String(i).replace(/^(.{1,2})$/, function(m) { return ("000" + m).slice(-3); });
+    log = logMap[rowId] || {};
+    obj.id = rowId;
+    obj.status = String(log.Status || "pending").toLowerCase();
+    obj.empCode = log.EmpCode || null;
+    obj.rejectReason = log.Reason || "";
+    result.push(obj);
+  }
+  return result;
 }
 
-// ── ADD EMPLOYEE ──
-function addEmployee(body){
-  const type=body["Employee Type"]||body.type;
-  if(!VALID_TYPES.includes(type)) return {success:false,error:"Invalid type: "+type};
-  getSheet(type).appendRow(SHEET_HEADERS.map(h=>(body[h]!==undefined&&body[h]!==null)?body[h]:""));
-  return {success:true};
+// ── APPROVE FORM ───────────────────────────────────────────
+function approveForm(body) {
+  var type = body.type || body["Employee Type"];
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type: " + type };
+  var sheet = getSheet(type);
+  var rowData = SHEET_HEADERS.map(function(h) { return (body[h] !== undefined && body[h] !== null) ? body[h] : ""; });
+  sheet.appendRow(rowData);
+  try {
+    var ls = getSheet("FormInboxLog");
+    ls.appendRow([body.formRowId||"","approved",body["Enter Employee Code"]||"",type,body.approvedBy||"",new Date().toISOString(),""]);
+  } catch(e) {}
+  return { success: true, empCode: body["Enter Employee Code"] };
 }
 
-// ── UPDATE BASIC INFO ──
-function updateBasicInfo(body){
-  const type=body.type;if(!VALID_TYPES.includes(type)) return {success:false,error:"Invalid type"};
-  const sheet=getSheet(type);const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);if(rowIdx<0) return {success:false,error:"Employee not found"};
-  ["Name","Father/Husband Name","DOB(As per Adhar)","Date Of Joining","Marital Status","Contact Number","E-mail ID (Personal)","E-mail ID (Official)","Department","Designation","Reporting Supervisor","Aadhar","PAN","Bank Name","Bank Account No.","IFSC CODE","Qualification","Gender","Age","Status","UAN No . (Previous/ Existing)"].forEach(field=>{
-    if(body[field]!==undefined){const ci=headers.indexOf(field);if(ci>=0) sheet.getRange(rowIdx+1,ci+1).setValue(body[field]);}
-  });
-  return {success:true};
+// ── REJECT FORM ────────────────────────────────────────────
+function rejectForm(body) {
+  try {
+    var ls = getSheet("FormInboxLog");
+    ls.appendRow([body.formRowId||"","rejected","","",body.rejectedBy||"",new Date().toISOString(),body.reason||""]);
+  } catch(e) {}
+  return { success: true };
 }
 
-// ── SAVE SALARY ──
-function saveSalary(body){
-  const type=body.type;if(!VALID_TYPES.includes(type)) return {success:false,error:"Invalid type"};
-  const sheet=getSheet(type);const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);if(rowIdx<0) return {success:false,error:"Employee "+body.empCode+" not found in "+type};
-  const salaryMap={"Status":body.status||"","EPFO No.":body.epfoNo||"","ESIC No . (Previous/ Existing)":body.esicNo||"","Basic":body.basic||0,"HRA":body.hra||0,"other":body.other||0,"Med. Allow":body.medAllow||0,"Spl Alw":body.splAlw||0,"Misc Allow":body.miscAllow||0,"Fixed Other All":body.fixedOther||0,"Variable (p.a.)":body.variable||0,"Monthly (Gross)":body.gross||0,"ESI (Employers Contribution)-3.25%":body.esiER||0,"PF (Employers Contribution)-13%":body.pfER||0,"INSURANCE":500,"Bonus":body.bonus||0,"Gratutity":body.gratuity||0,"PL":body.pl||0,"cl":body.cl||0,"CTC (p.m.)":body.ctcPM||0,"CTC (p.a.)":body.ctcPA||0,"ESIC (Employee Deduction)-0.75%":body.esiEE||0,"PF Deduction (Employee Deduction)-12%":body.pfEE||0,"Take Home Salary":body.takeHome||0};
-  Object.entries(salaryMap).forEach(([field,value])=>{const ci=headers.indexOf(field);if(ci>=0) sheet.getRange(rowIdx+1,ci+1).setValue(value);});
-  return {success:true};
+// ── ADD EMPLOYEE ───────────────────────────────────────────
+function addEmployee(body) {
+  var type = body["Employee Type"] || body.type;
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type: " + type };
+  var rowData = SHEET_HEADERS.map(function(h) { return (body[h] !== undefined && body[h] !== null) ? body[h] : ""; });
+  getSheet(type).appendRow(rowData);
+  return { success: true };
 }
 
-// ── UPDATE SINGLE DOC FIELD ──
-function updateDocField(body){
-  const type=body.type;if(!VALID_TYPES.includes(type)) return {success:false,error:"Invalid type"};
-  const sheet=getSheet(type);const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);if(rowIdx<0) return {success:false,error:"Employee not found"};
-  const ci=headers.indexOf(body.fieldName);if(ci<0) return {success:false,error:'Column "'+body.fieldName+'" not found'};
-  sheet.getRange(rowIdx+1,ci+1).setValue(body.value||"");
-  return {success:true};
+// ── UPDATE BASIC INFO ──────────────────────────────────────
+function updateBasicInfo(body) {
+  var type = body.type;
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type" };
+  var sheet = getSheet(type), headers = getSheetHeaders(sheet);
+  var rowIdx = findEmployeeRow(sheet, body.empCode);
+  if (rowIdx < 0) return { success: false, error: "Employee " + body.empCode + " not found" };
+  var basicFields = [
+    "Name","Father/Husband Name","DOB(As per Adhar)","Date Of Joining",
+    "Marital Status","Contact Number","E-mail ID (Personal)","E-mail ID (Official)",
+    "Department","Designation","Reporting Supervisor","Aadhar","PAN",
+    "Bank Name","Bank Account No.","IFSC CODE","Qualification","Gender",
+    "Age","Status","UAN No . (Previous/ Existing)"
+  ];
+  var i, field, ci;
+  for (i = 0; i < basicFields.length; i++) {
+    field = basicFields[i];
+    if (body[field] !== undefined) {
+      ci = headers.indexOf(field);
+      if (ci >= 0) sheet.getRange(rowIdx + 1, ci + 1).setValue(body[field]);
+    }
+  }
+  return { success: true };
 }
 
-// ── UPDATE ALL DOC FIELDS ──
-function updateDocFields(body){
-  const type=body.type;if(!VALID_TYPES.includes(type)) return {success:false,error:"Invalid type"};
-  const sheet=getSheet(type);const headers=getSheetHeaders(sheet);
-  const rowIdx=findEmployeeRow(sheet,body.empCode);if(rowIdx<0) return {success:false,error:"Employee not found"};
-  ["Personal Details","Form 26","ESI Form 1","Form 2 PF","Nomination Form-F Payment of Gratuity Act 1972","EPF-Form-11-Declaration Form","SIM","Laptop","Joining Report","Rules & Regulation 1st of jan 2026","Appointment Letter","Confirmation Letter","Service Record","Increment Letter 24-25","Promotion Letter","Employment History Sheet","JD","Master Task Sheet","KRA","KPI","DOB","DOJ","File Number","Date of Leaving (if Left)","Full & Final Process Completed","Relieving Letter Issued","Remarks"].forEach(field=>{
-    const ci=headers.indexOf(field);if(ci>=0&&body.docs&&body.docs[field]!==undefined) sheet.getRange(rowIdx+1,ci+1).setValue(body.docs[field]||"");
-  });
-  return {success:true};
+// ── SAVE SALARY ────────────────────────────────────────────
+function saveSalary(body) {
+  var type = body.type;
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type" };
+  var sheet = getSheet(type), headers = getSheetHeaders(sheet);
+  var rowIdx = findEmployeeRow(sheet, body.empCode);
+  if (rowIdx < 0) return { success: false, error: "Employee " + body.empCode + " not found in " + type };
+  var salaryMap = {
+    "EPFO No.":                              body.epfoNo       || "",
+    "ESIC No . (Previous/ Existing)":        body.esicNo       || "",
+    "Basic":                                 body.basic        || 0,
+    "HRA":                                   body.hra          || 0,
+    "other":                                 body.other        || 0,
+    "Monthly (Gross)":                       body.gross        || 0,
+    "ESI (Employers Contribution)-3.25%":    body.esiER        || 0,
+    "PF (Employers Contribution)-13%":       body.pfER         || 0,
+    "INSURANCE":                             body.insurance    || 0,
+    "Bonus":                                 body.bonus        || 0,
+    "Gratutity":                             body.gratuity     || 0,
+    "PL":                                    body.pl           || 0,
+    "cl":                                    body.cl           || 0,
+    "CTC (p.m.)":                            body.ctcPM        || 0,
+    "CTC (p.a.)":                            body.ctcPA        || 0,
+    "ESIC (Employee Deduction)-0.75%":       body.esiEE        || 0,
+    "PF Deduction (Employee Deduction)-12%": body.pfEE         || 0,
+    "Take Home Salary":                      body.takeHome     || 0,
+    "Is PF Deducted":                        body.isPF         || "Yes",
+    "Is ESIC Deducted":                      body.isESIC       || "Yes",
+    "Has Insurance":                         body.hasInsurance || "Yes",
+    "Has Bonus":                             body.hasBonus     || "Yes",
+    "Has Gratuity":                          body.hasGratuity  || "Yes",
+    "Has EL":                                body.hasEL        || "Yes",
+    "Has CL":                                body.hasCL        || "Yes"
+  };
+  var keys = Object.keys(salaryMap), i, ci;
+  for (i = 0; i < keys.length; i++) {
+    ci = headers.indexOf(keys[i]);
+    if (ci >= 0) sheet.getRange(rowIdx + 1, ci + 1).setValue(salaryMap[keys[i]]);
+  }
+  return { success: true };
 }
 
-// ── BULK IMPORT ──
-function bulkImport(body){
-  let success=0,failed=0;
-  (body.employees||[]).forEach(emp=>{
-    const type=emp["Employee Type"]||emp.type;
-    if(!VALID_TYPES.includes(type)){failed++;return;}
-    try{getSheet(type).appendRow(SHEET_HEADERS.map(h=>(emp[h]!==undefined&&emp[h]!==null)?emp[h]:""));success++;}catch(e){failed++;}
-  });
-  return {success:true,imported:success,failed:failed};
+// ── UPDATE SINGLE DOC FIELD ────────────────────────────────
+function updateDocField(body) {
+  var type = body.type;
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type" };
+  var sheet = getSheet(type), headers = getSheetHeaders(sheet);
+  var rowIdx = findEmployeeRow(sheet, body.empCode);
+  if (rowIdx < 0) return { success: false, error: "Employee not found" };
+  var ci = headers.indexOf(body.fieldName);
+  if (ci < 0) return { success: false, error: "Column not found: " + body.fieldName };
+  sheet.getRange(rowIdx + 1, ci + 1).setValue(body.value || "");
+  return { success: true };
 }
 
-// ── ADD USER ──
-function addUser(body){
-  if(!body.username||!body.password||!body.role) return {success:false,error:"username, password and role required"};
-  getSheet("Users").appendRow([body.username,body.password,body.role,body.displayName||body.username,"Yes"]);
-  return {success:true};
-}`;
+// ── UPDATE ALL DOC FIELDS ──────────────────────────────────
+function updateDocFields(body) {
+  var type = body.type;
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type" };
+  var sheet = getSheet(type), headers = getSheetHeaders(sheet);
+  var rowIdx = findEmployeeRow(sheet, body.empCode);
+  if (rowIdx < 0) return { success: false, error: "Employee not found" };
+  var docFields = [
+    "Personal Details","Form 26","ESI Form 1","Form 2 PF",
+    "Nomination Form-F Payment of Gratuity Act 1972","EPF-Form-11-Declaration Form",
+    "SIM","Laptop","Joining Report","Rules & Regulation 1st of jan 2026",
+    "Appointment Letter","Confirmation Letter","Service Record","Increment Letter 24-25",
+    "Promotion Letter","Employment History Sheet","JD","Master Task Sheet",
+    "KRA","KPI","DOB","DOJ","File Number","Date of Leaving (if Left)",
+    "Full & Final Process Completed","Relieving Letter Issued","Remarks"
+  ];
+  var i, field, ci;
+  for (i = 0; i < docFields.length; i++) {
+    field = docFields[i];
+    ci = headers.indexOf(field);
+    if (ci >= 0 && body.docs && body.docs[field] !== undefined) {
+      sheet.getRange(rowIdx + 1, ci + 1).setValue(body.docs[field] || "");
+    }
+  }
+  return { success: true };
+}
+
+// ── UPDATE EMPLOYEE STATUS ─────────────────────────────────
+function updateEmpStatus(body) {
+  var type = body.type;
+  if (VALID_TYPES.indexOf(type) < 0) return { success: false, error: "Invalid type: " + type };
+  var sheet = getSheet(type), headers = getSheetHeaders(sheet);
+  var rowIdx = findEmployeeRow(sheet, body.empCode);
+  if (rowIdx < 0) return { success: false, error: "Employee " + body.empCode + " not found in " + type };
+  var ci = headers.indexOf("Status");
+  if (ci < 0) return { success: false, error: "Status column not found" };
+  sheet.getRange(rowIdx + 1, ci + 1).setValue(body.status || "Active");
+  return { success: true };
+}
+
+// ── BULK IMPORT ────────────────────────────────────────────
+function bulkImport(body) {
+  var success = 0, failed = 0, i, emp, type, rowData;
+  var employees = body.employees || [];
+  for (i = 0; i < employees.length; i++) {
+    emp = employees[i];
+    type = emp["Employee Type"] || emp.type;
+    if (VALID_TYPES.indexOf(type) < 0) { failed++; continue; }
+    try {
+      rowData = SHEET_HEADERS.map(function(h) { return (emp[h] !== undefined && emp[h] !== null) ? emp[h] : ""; });
+      getSheet(type).appendRow(rowData);
+      success++;
+    } catch(e) { failed++; }
+  }
+  return { success: true, imported: success, failed: failed };
+}
+
+// ── ADD USER ───────────────────────────────────────────────
+function addUser(body) {
+  if (!body.username || !body.password || !body.role) {
+    return { success: false, error: "username, password and role are required" };
+  }
+  getSheet("Users").appendRow([body.username, body.password, body.role, body.displayName || body.username, "Yes"]);
+  return { success: true };
+}
+
+// ── TEST FUNCTION ──────────────────────────────────────────
+function testFullFlow() {
+  var results = [], i, s, r, d, addR, sheet, rowIdx;
+  var required = ["G1","G2","G3","FormInboxLog","Users","Settings"];
+  for (i = 0; i < required.length; i++) {
+    try {
+      s = getSheet(required[i]);
+      results.push("OK " + required[i] + " (" + s.getLastColumn() + " cols)");
+    } catch(e) { results.push("FAIL " + e.message); }
+  }
+  try {
+    r = verifyLogin("admin", "Admin@123");
+    results.push(r.success ? "OK Login: admin -> " + r.user.role : "FAIL Login: " + r.message);
+  } catch(e) { results.push("FAIL Login: " + e.message); }
+  try {
+    d = getAllData("Form Responses 1");
+    results.push("OK getAllData: G1=" + d.g1.length + " G2=" + d.g2.length + " G3=" + d.g3.length);
+  } catch(e) { results.push("FAIL getAllData: " + e.message); }
+  try {
+    var testEmp = {"Employee Type":"G1","Enter Employee Code":"TEST-001","Name":"Test Employee","Status":"Active","Source":"Test","CreatedAt":new Date().toISOString()};
+    addR = addEmployee(testEmp);
+    results.push(addR.success ? "OK addEmployee" : "FAIL addEmployee");
+    sheet = getSheet("G1");
+    rowIdx = findEmployeeRow(sheet, "TEST-001");
+    results.push(rowIdx > 0 ? "OK findEmployeeRow (row " + (rowIdx+1) + ")" : "FAIL findEmployeeRow");
+    if (rowIdx > 0) { sheet.deleteRow(rowIdx + 1); results.push("OK test row cleaned up"); }
+  } catch(e) { results.push("FAIL: " + e.message); }
+  var output = "=== Full Flow Test ===" + "\n\n" + results.join("\n");
+  Logger.log(output);
+  SpreadsheetApp.getUi().alert(output);
+}`
 
 function renderSetup() {
   if (APP.user?.role!=='admin') return `<div class="empty-state"><div class="empty-icon">🔒</div><h3>Admin Only</h3></div>`;
