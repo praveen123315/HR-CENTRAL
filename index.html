@@ -809,6 +809,7 @@ const NAV_ITEMS = {
     {label:"Employees",icon:"👥",page:"masterDB",section:"Main"},
     {label:"Salary Manager",icon:"💰",page:"salary",section:"HR Tools"},
     {label:"Document Tracking",icon:"📋",page:"docTracking",section:"HR Tools"},
+    {label:"KRA & Doc Upload",icon:"📎",page:"kraUpload",section:"HR Tools"},
     {label:"Bulk Import",icon:"📤",page:"bulkImport",section:"HR Tools"},
     {label:"Reports",icon:"📈",page:"reports",section:"Analytics"},
     {label:"Policies",icon:"📜",page:"policies",section:"Company"},
@@ -856,7 +857,7 @@ function initApp() {
   APP.g2 = JSON.parse(JSON.stringify(SAMPLE_G2));
   APP.g3 = JSON.parse(JSON.stringify(SAMPLE_G3));
   APP.formInbox = JSON.parse(JSON.stringify(SAMPLE_INBOX));
-  // Load policies from localStorage (persistent), fall back to empty array so admin can add own
+  // Policies: try localStorage as cache, but always sync from Sheets on login
   const storedPolicies = localStorage.getItem('hrc_policies');
   APP.policies = storedPolicies ? JSON.parse(storedPolicies) : [];
   APP.users = JSON.parse(JSON.stringify(SAMPLE_USERS));
@@ -951,6 +952,7 @@ function navigateTo(page) {
     masterDB:['Employee Database','All employees across G1, G2, G3'],
     salary:['Salary Manager','Manage employee compensation'],
     docTracking:['Document Tracking','Nupur\'s section — track employee documents'],
+    kraUpload:['KRA & Document Upload','Upload KRA, KPI and document links per employee'],
     bulkImport:['Bulk Import','Import multiple employees from CSV'],
     reports:['Reports','Generate & export reports'],
     policies:['Company Policies','Policy documents & resources'],
@@ -974,6 +976,7 @@ function renderPage(page) {
     case 'masterDB': return renderMasterDB();
     case 'salary': return renderSalary();
     case 'docTracking': return renderDocTracking();
+    case 'kraUpload': return renderKraUpload();
     case 'bulkImport': return renderBulkImport();
     case 'reports': return renderReports();
     case 'policies': return renderPolicies();
@@ -1020,6 +1023,11 @@ async function fetchAllData() {
     if (data.g3) APP.g3 = data.g3;
     if (data.formInbox) APP.formInbox = data.formInbox;
     if (data.users) APP.users = data.users;
+    // Sync policies from Sheets — this makes them shared across ALL devices/users
+    if (data.policies && Array.isArray(data.policies)) {
+      APP.policies = data.policies;
+      localStorage.setItem('hrc_policies', JSON.stringify(APP.policies));
+    }
     renderSidebarNav();
     if (APP.currentPage) navigateTo(APP.currentPage);
     toast('Synced from Google Sheets', 'success');
@@ -2443,6 +2451,125 @@ async function saveDocCell(code,type,field,el) {
   toast(`${field} updated`,'success');
 }
 
+// ===================== KRA & DOCUMENT UPLOAD =====================
+function renderKraUpload() {
+  const allEmp = [...APP.g1,...APP.g2,...APP.g3];
+  const KRA_DOC_FIELDS = [
+    {key:'KRA', label:'KRA (Key Result Areas)', icon:'🎯', hint:'Paste Google Drive link to KRA document'},
+    {key:'KPI', label:'KPI (Key Performance Indicators)', icon:'📊', hint:'Paste Google Drive link to KPI document'},
+    {key:'JD', label:'JD (Job Description)', icon:'📄', hint:'Paste Google Drive link to Job Description'},
+    {key:'Master Task Sheet', label:'Master Task Sheet', icon:'📋', hint:'Paste Google Drive link to Master Task Sheet'},
+    {key:'Employment History Sheet', label:'Employment History Sheet', icon:'🗂️', hint:'Paste Google Drive link'},
+    {key:'Appointment Letter', label:'Appointment Letter', icon:'✉️', hint:'Paste Google Drive link'},
+    {key:'Confirmation Letter', label:'Confirmation Letter', icon:'✅', hint:'Paste Google Drive link'},
+    {key:'Increment Letter 24-25', label:'Increment Letter 24-25', icon:'📈', hint:'Paste Google Drive link'},
+    {key:'Promotion Letter', label:'Promotion Letter', icon:'🏅', hint:'Paste Google Drive link'},
+    {key:'Service Record', label:'Service Record', icon:'📁', hint:'Paste Google Drive link'},
+    {key:'Upload Offer letter', label:'Offer Letter', icon:'📝', hint:'Paste Google Drive link'},
+  ];
+
+  return '<div class="card mb-4">' +
+    '<div class="card-header">' +
+      '<span class="card-title">📎 Select Employee</span>' +
+    '</div>' +
+    '<div class="card-body">' +
+      '<div class="form-grid">' +
+        '<div class="form-group" style="grid-column:1/-1;">' +
+          '<label>Employee</label>' +
+          '<select class="form-control" id="kraEmpSelect" onchange="loadKraFields()">' +
+            '<option value="">— Choose employee —</option>' +
+            allEmp.map(function(e){ return '<option value="'+e['Enter Employee Code']+'|'+e['Employee Type']+'">'+ e.Name+' ('+e['Enter Employee Code']+') — '+(e.Department||'No Dept')+'</option>'; }).join('') +
+          '</select>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+  '<div id="kraFormArea"></div>';
+}
+
+function loadKraFields() {
+  const sel = document.getElementById('kraEmpSelect').value;
+  if (!sel) return;
+  const [code, type] = sel.split('|');
+  const sheet = type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
+  const emp = sheet.find(e=>e['Enter Employee Code']===code);
+  if (!emp) return;
+
+  const KRA_DOC_FIELDS = [
+    {key:'KRA', label:'KRA (Key Result Areas)', icon:'🎯'},
+    {key:'KPI', label:'KPI (Key Performance Indicators)', icon:'📊'},
+    {key:'JD', label:'Job Description (JD)', icon:'📄'},
+    {key:'Master Task Sheet', label:'Master Task Sheet', icon:'📋'},
+    {key:'Employment History Sheet', label:'Employment History Sheet', icon:'🗂️'},
+    {key:'Appointment Letter', label:'Appointment Letter', icon:'✉️'},
+    {key:'Confirmation Letter', label:'Confirmation Letter', icon:'✅'},
+    {key:'Increment Letter 24-25', label:'Increment Letter 24-25', icon:'📈'},
+    {key:'Promotion Letter', label:'Promotion Letter', icon:'🏅'},
+    {key:'Service Record', label:'Service Record', icon:'📁'},
+    {key:'Upload Offer letter', label:'Offer Letter Upload', icon:'📝'},
+    {key:'Joining Report', label:'Joining Report', icon:'🗒️'},
+  ];
+
+  function docRow(field) {
+    const val = emp[field.key] || '';
+    const isLink = val.startsWith('http');
+    const preview = isLink
+      ? '<a href="'+val+'" target="_blank" class="btn btn-secondary btn-sm" style="margin-left:8px;">🔗 View Current</a>'
+      : (val ? '<span style="font-size:11px;color:var(--text3);margin-left:8px;">'+val+'</span>' : '');
+    return '<div style="background:var(--surface2);border:1.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:10px;">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">' +
+        '<span style="font-size:18px;">'+field.icon+'</span>' +
+        '<div style="font-weight:600;font-size:13px;color:var(--text);">'+field.label+'</div>' +
+        preview +
+      '</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;">' +
+        '<input class="form-control" id="kra_'+field.key.replace(/[^a-zA-Z0-9]/g,'_')+'" type="text" ' +
+          'placeholder="Paste Google Drive link: https://drive.google.com/..." ' +
+          'value="'+val+'" style="flex:1;font-size:12px;"/>' +
+        (isLink ? '<button class="btn btn-ghost btn-sm" onclick="document.getElementById(\'kra_'+field.key.replace(/[^a-zA-Z0-9]/g,'_')+'\').value=\'\'" title="Clear">✕</button>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  document.getElementById('kraFormArea').innerHTML =
+    '<div class="card">' +
+      '<div class="card-header">' +
+        '<div>' +
+          '<div class="card-title">📎 '+emp.Name+'</div>' +
+          '<div style="font-size:12px;color:var(--text3);margin-top:2px;">'+emp['Enter Employee Code']+' · '+(emp.Department||'')+'</div>' +
+        '</div>' +
+        '<button class="btn btn-success btn-sm" onclick="saveKraDocs(\''+code+'\',\''+type+'\')">💾 Save All Links</button>' +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div style="background:var(--blue-lt);border:1.5px solid rgba(59,111,212,0.2);border-radius:10px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#2a4a8a;">' +
+          '💡 <strong>How to upload:</strong> Go to Google Drive → upload your file → right-click → "Get link" → set to "Anyone with the link can view" → paste the link below.' +
+        '</div>' +
+        KRA_DOC_FIELDS.map(docRow).join('') +
+      '</div>' +
+    '</div>';
+}
+
+async function saveKraDocs(code, type) {
+  const sheet = type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
+  const emp = sheet.find(e=>e['Enter Employee Code']===code);
+  if (!emp) return;
+
+  const KRA_KEYS = ['KRA','KPI','JD','Master Task Sheet','Employment History Sheet','Appointment Letter','Confirmation Letter','Increment Letter 24-25','Promotion Letter','Service Record','Upload Offer letter','Joining Report'];
+  const updates = {};
+  KRA_KEYS.forEach(function(key) {
+    const el = document.getElementById('kra_'+key.replace(/[^a-zA-Z0-9]/g,'_'));
+    if (el) { emp[key] = el.value; updates[key] = el.value; }
+  });
+
+  if (APP.scriptUrl) {
+    try { await postToScript({action:'updateDocFields', empCode:code, type, docs:emp}); } catch(e) {}
+  }
+  toast('✅ Document links saved for '+emp.Name,'success');
+
+  // Refresh the preview links
+  loadKraFields();
+}
+
 // ===================== BULK IMPORT =====================
 function renderBulkImport() {
   return `
@@ -2678,13 +2805,28 @@ function openAddPolicyModal() {
 function savePolicy() {
   const name=document.getElementById('pol_name').value;
   if (!name) { toast('Policy name required','error'); return; }
-  APP.policies.push({id:Date.now(),name,category:document.getElementById('pol_cat').value,description:document.getElementById('pol_desc').value,url:document.getElementById('pol_url').value||'#',icon:document.getElementById('pol_icon').value||'📄'});
+  const policy = {
+    id: Date.now(),
+    name,
+    category: document.getElementById('pol_cat').value,
+    description: document.getElementById('pol_desc').value,
+    url: document.getElementById('pol_url').value||'#',
+    icon: document.getElementById('pol_icon').value||'📄'
+  };
+  APP.policies.push(policy);
   localStorage.setItem('hrc_policies', JSON.stringify(APP.policies));
-  closeModal('addPolicyModal'); toast('Policy added','success'); navigateTo('policies');
+  // Sync to Google Sheets so ALL users see it
+  if (APP.scriptUrl) {
+    postToScript({action:'savePolicies', policies: APP.policies}).catch(()=>{});
+  }
+  closeModal('addPolicyModal'); toast('Policy added — visible to all users','success'); navigateTo('policies');
 }
 function deletePolicy(id) {
-  APP.policies=APP.policies.filter(p=>p.id!==id);
+  APP.policies = APP.policies.filter(p=>p.id!==id);
   localStorage.setItem('hrc_policies', JSON.stringify(APP.policies));
+  if (APP.scriptUrl) {
+    postToScript({action:'savePolicies', policies: APP.policies}).catch(()=>{});
+  }
   toast('Policy removed','success'); navigateTo('policies');
 }
 
@@ -2852,6 +2994,16 @@ function setupEverything() {
     log.push("EXISTS: Settings");
   }
 
+  var policiesSheet = ss.getSheetByName("Policies");
+  if (!policiesSheet) {
+    policiesSheet = ss.insertSheet("Policies");
+    var ph = ["id","name","category","description","url","icon"];
+    policiesSheet.getRange(1,1,1,ph.length).setValues([ph]);
+    policiesSheet.getRange(1,1,1,ph.length).setFontWeight("bold").setBackground("#2a7d6f").setFontColor("#ffffff");
+    policiesSheet.setFrozenRows(1);
+    log.push("CREATED: Policies");
+  } else { log.push("EXISTS: Policies"); }
+
   try {
     var sheet1 = ss.getSheetByName("Sheet1");
     if (sheet1 && ss.getSheets().length > 1) { ss.deleteSheet(sheet1); log.push("DELETED default Sheet1"); }
@@ -2873,7 +3025,7 @@ function setupEverything() {
 function checkSetup() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var lines = ["=== HR Central Health Check ===", ""];
-  var required = ["G1","G2","G3","FormInboxLog","Users","Settings"];
+  var required = ["G1","G2","G3","FormInboxLog","Users","Settings","Policies"];
   var i, s;
   for (i = 0; i < required.length; i++) {
     s = ss.getSheetByName(required[i]);
@@ -2986,6 +3138,7 @@ function doPost(e) {
     else if (action === "updateEmpStatus") result = updateEmpStatus(body);
     else if (action === "bulkImport")      result = bulkImport(body);
     else if (action === "addUser")         result = addUser(body);
+    else if (action === "savePolicies")    result = savePolicies(body);
     else result = { error: "Unknown action: " + action };
   } catch(err) { result = { error: err.message }; }
   return corsOutput(result);
@@ -3016,8 +3169,52 @@ function getAllData(formTab) {
     g2:        sheetToArray("G2"),
     g3:        sheetToArray("G3"),
     formInbox: getFormInboxData(formTab || "Form Responses 1"),
-    users:     sheetToArray("Users")
+    users:     sheetToArray("Users"),
+    policies:  getPolicies()
   };
+}
+
+// -- GET POLICIES --
+function getPolicies() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName("Policies");
+    if (!sheet || sheet.getLastRow() < 2) return [];
+    var data = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
+    var headers = data[0];
+    var result = [];
+    for (var i = 1; i < data.length; i++) {
+      var obj = rowToObject(headers, data[i]);
+      if (obj.id || obj.name) {
+        if (obj.id) obj.id = parseInt(obj.id) || obj.id;
+        result.push(obj);
+      }
+    }
+    return result;
+  } catch(e) { return []; }
+}
+
+// -- SAVE POLICIES --
+function savePolicies(body) {
+  var policies = body.policies || [];
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Policies");
+  if (!sheet) {
+    sheet = ss.insertSheet("Policies");
+  }
+  // Clear and rewrite
+  sheet.clearContents();
+  var headers = ["id","name","category","description","url","icon"];
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#2a7d6f").setFontColor("#ffffff");
+  sheet.setFrozenRows(1);
+  if (policies.length > 0) {
+    var rows = policies.map(function(p) {
+      return [p.id||"", p.name||"", p.category||"", p.description||"", p.url||"", p.icon||""];
+    });
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+  return { success: true, count: policies.length };
 }
 
 // ── FORM INBOX ─────────────────────────────────────────────
@@ -3235,7 +3432,7 @@ function addUser(body) {
 // ── TEST FUNCTION ──────────────────────────────────────────
 function testFullFlow() {
   var results = [], i, s, r, d, addR, sheet, rowIdx;
-  var required = ["G1","G2","G3","FormInboxLog","Users","Settings"];
+  var required = ["G1","G2","G3","FormInboxLog","Users","Settings","Policies"];
   for (i = 0; i < required.length; i++) {
     try {
       s = getSheet(required[i]);
