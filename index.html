@@ -1021,9 +1021,25 @@ async function fetchAllData() {
     if (data.g1) APP.g1 = data.g1;
     if (data.g2) APP.g2 = data.g2;
     if (data.g3) APP.g3 = data.g3;
-    if (data.formInbox) APP.formInbox = data.formInbox;
+    if (data.formInbox) {
+      // Auto-match: if a pending form submission already exists in the DB (by name+contact or email), mark as imported
+      const allEmp = [...(data.g1||[]),...(data.g2||[]),...(data.g3||[])];
+      data.formInbox.forEach(function(f) {
+        if (f.status !== 'pending') return;
+        const match = allEmp.find(function(e) {
+          const nameMatch = (e.Name||'').toLowerCase().trim() === (f.Name||'').toLowerCase().trim();
+          const contactMatch = e['Contact Number'] && f['Contact Number'] && String(e['Contact Number']).replace(/\D/g,'') === String(f['Contact Number']).replace(/\D/g,'');
+          const emailMatch = e['E-mail ID (Personal)'] && f.Email && e['E-mail ID (Personal)'].toLowerCase().trim() === (f.Email||'').toLowerCase().trim();
+          return nameMatch && (contactMatch || emailMatch);
+        });
+        if (match) {
+          f.status = 'imported';
+          f.empCode = match['Enter Employee Code'];
+        }
+      });
+      APP.formInbox = data.formInbox;
+    }
     if (data.users) APP.users = data.users;
-    // Sync policies from Sheets — this makes them shared across ALL devices/users
     if (data.policies && Array.isArray(data.policies)) {
       APP.policies = data.policies;
       localStorage.setItem('hrc_policies', JSON.stringify(APP.policies));
@@ -1149,22 +1165,42 @@ let _inboxFilter = 'all';
 function renderFormInbox() {
   const role = APP.user?.role;
   if (role !== 'admin' && role !== 'hr') return `<div class="empty-state"><div class="empty-icon">🔒</div><h3>Access Denied</h3><p>This section is available to HR and Admin only.</p></div>`;
+
+  // Auto-match pending entries against existing employees in DB (client-side, no server needed)
+  const allEmp = [...APP.g1,...APP.g2,...APP.g3];
+  APP.formInbox.forEach(function(f) {
+    if (f.status !== 'pending') return;
+    const match = allEmp.find(function(e) {
+      const nameMatch = (e.Name||'').toLowerCase().trim() === (f.Name||'').toLowerCase().trim();
+      const contactMatch = e['Contact Number'] && f['Contact Number'] && String(e['Contact Number']).replace(/\D/g,'') === String(f['Contact Number']).replace(/\D/g,'');
+      const emailMatch = e['E-mail ID (Personal)'] && f.Email && e['E-mail ID (Personal)'].toLowerCase().trim() === (f.Email||'').toLowerCase().trim();
+      return nameMatch && (contactMatch || emailMatch);
+    });
+    if (match) { f.status = 'imported'; f.empCode = match['Enter Employee Code']; }
+  });
+
   const counts = {
-    all: APP.formInbox.length,
-    pending: APP.formInbox.filter(f=>f.status==='pending').length,
+    all:      APP.formInbox.length,
+    pending:  APP.formInbox.filter(f=>f.status==='pending').length,
     approved: APP.formInbox.filter(f=>f.status==='approved').length,
+    imported: APP.formInbox.filter(f=>f.status==='imported').length,
     rejected: APP.formInbox.filter(f=>f.status==='rejected').length
   };
+
   return `
 <div style="background:linear-gradient(135deg,#1e3a5f 0%,#2563a8 100%);border-radius:var(--radius-lg);padding:20px 24px;margin-bottom:20px;color:white;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
   <div>
     <div style="font-size:18px;font-weight:700;font-family:var(--serif);">📥 New Employee Form Submissions</div>
     <div style="font-size:12px;opacity:0.8;margin-top:3px;">Review applications submitted via the Google Form onboarding link</div>
   </div>
-  <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.3);" onclick="fetchAllData()">🔄 Refresh</button>
-  ${counts.pending > 1 ? '<button class="btn btn-sm" style="background:#f59e0b;color:white;border-color:#d97706;" onclick="openBulkApproveModal()">⚡ Bulk Approve ('+counts.pending+' pending)</button>' : ''}
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.3);" onclick="fetchAllData()">🔄 Refresh</button>
+    ${counts.pending > 0 ? '<button class="btn btn-sm" style="background:#f59e0b;color:white;border-color:#d97706;" onclick="openBulkApproveModal()">⚡ Bulk Approve ('+counts.pending+' pending)</button>' : ''}
+    ${counts.imported > 0 ? '<button class="btn btn-sm" style="background:#10b981;color:white;border-color:#059669;" onclick="markAllImportedDone()">✅ Clear Imported ('+counts.imported+')</button>' : ''}
+    <button class="btn btn-sm" style="background:rgba(255,255,255,0.15);color:white;border-color:rgba(255,255,255,0.3);" onclick="navigateTo(\'bulkImport\')">📤 Bulk Import CSV</button>
+  </div>
 </div>
-<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px;">
   <div style="background:var(--white);border:1.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('all',this)">
     <div style="font-size:22px;font-weight:800;color:var(--text);">${counts.all}</div>
     <div style="font-size:11px;color:var(--text3);margin-top:3px;font-weight:600;">TOTAL</div>
@@ -1172,6 +1208,10 @@ function renderFormInbox() {
   <div style="background:var(--yellow-lt);border:1.5px solid rgba(196,134,10,0.3);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('pending',this)">
     <div style="font-size:22px;font-weight:800;color:var(--yellow);">${counts.pending}</div>
     <div style="font-size:11px;color:var(--yellow);margin-top:3px;font-weight:600;">⏳ PENDING</div>
+  </div>
+  <div style="background:#f0fdf4;border:1.5px solid rgba(16,185,129,0.3);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('imported',this)">
+    <div style="font-size:22px;font-weight:800;color:#059669;">${counts.imported}</div>
+    <div style="font-size:11px;color:#059669;margin-top:3px;font-weight:600;">📤 ALREADY IN DB</div>
   </div>
   <div style="background:var(--green-lt);border:1.5px solid rgba(45,158,107,0.3);border-radius:var(--radius);padding:14px 16px;text-align:center;cursor:pointer;" onclick="filterInbox('approved',this)">
     <div style="font-size:22px;font-weight:800;color:var(--green);">${counts.approved}</div>
@@ -1182,9 +1222,19 @@ function renderFormInbox() {
     <div style="font-size:11px;color:var(--red);margin-top:3px;font-weight:600;">❌ REJECTED</div>
   </div>
 </div>
+
+${counts.imported > 0 ? `<div style="background:#f0fdf4;border:1.5px solid rgba(16,185,129,0.4);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+  <div style="font-size:13px;color:#065f46;">
+    <strong>📤 ${counts.imported} submissions already exist in the Employee Database</strong>
+    <div style="font-size:12px;margin-top:2px;opacity:0.8;">These were matched by name + contact/email. Click "Clear Imported" to log them as approved and remove from pending count.</div>
+  </div>
+  <button class="btn btn-sm" style="background:#10b981;color:white;border-color:#059669;white-space:nowrap;" onclick="markAllImportedDone()">✅ Clear Imported (${counts.imported})</button>
+</div>` : ''}
+
 <div style="display:flex;gap:8px;margin-bottom:16px;" id="inboxTabBar">
   <button class="tab-btn active" onclick="filterInbox('all',this)">All (${counts.all})</button>
   <button class="tab-btn" onclick="filterInbox('pending',this)">⏳ Pending (${counts.pending})</button>
+  ${counts.imported > 0 ? '<button class="tab-btn" onclick="filterInbox(\'imported\',this)">📤 In DB ('+counts.imported+')</button>' : ''}
   <button class="tab-btn" onclick="filterInbox('approved',this)">✅ Approved (${counts.approved})</button>
   <button class="tab-btn" onclick="filterInbox('rejected',this)">❌ Rejected (${counts.rejected})</button>
 </div>
@@ -1207,12 +1257,24 @@ function renderInboxTable(filter) {
   }
 
   const rows = items.map(function(f) {
-    const statusClass = f.status==='pending' ? 'badge-yellow' : f.status==='approved' ? 'badge-green' : 'badge-red';
-    const statusLabel = f.status==='pending' ? '⏳ Pending' : f.status==='approved' ? '✅ Approved' : '❌ Rejected';
-    const rowBg = f.status==='pending' ? '' : f.status==='rejected' ? 'opacity:0.8;background:var(--red-lt);' : 'background:var(--green-lt);';
-    const actionBtn = f.status==='pending'
-      ? '<button class="btn btn-primary btn-sm" onclick="openApproveModal(\''+f.id+'\')">📋 Review →</button>'
-      : (f.empCode ? '<span class="badge badge-teal font-mono" style="font-size:11px;">'+f.empCode+'</span>' : '—');
+    let statusClass, statusLabel, rowBg, actionBtn;
+    if (f.status === 'imported') {
+      statusClass = 'badge-green'; statusLabel = '📤 In DB';
+      rowBg = 'background:#f0fdf4;';
+      actionBtn = f.empCode ? '<span class="badge badge-teal font-mono" style="font-size:11px;">'+f.empCode+'</span>' : '<span style="color:#059669;font-size:12px;">✅ Imported</span>';
+    } else if (f.status === 'approved') {
+      statusClass = 'badge-green'; statusLabel = '✅ Approved';
+      rowBg = 'background:var(--green-lt);';
+      actionBtn = f.empCode ? '<span class="badge badge-teal font-mono" style="font-size:11px;">'+f.empCode+'</span>' : '—';
+    } else if (f.status === 'rejected') {
+      statusClass = 'badge-red'; statusLabel = '❌ Rejected';
+      rowBg = 'opacity:0.8;background:var(--red-lt);';
+      actionBtn = '<span style="color:var(--text4);font-size:12px;">Rejected</span>';
+    } else {
+      statusClass = 'badge-yellow'; statusLabel = '⏳ Pending';
+      rowBg = '';
+      actionBtn = '<button class="btn btn-primary btn-sm" onclick="openApproveModal(\''+f.id+'\')">📋 Review →</button>';
+    }
     return '<tr style="'+rowBg+'vertical-align:top;">' +
       '<td style="font-weight:700;color:var(--text);white-space:nowrap;">'+fmtDateTime(f.Timestamp||'')+'</td>' +
       '<td style="font-weight:600;color:var(--text);white-space:nowrap;">'+(f.Name||'—')+'</td>' +
@@ -1283,6 +1345,38 @@ function filterInbox(filter, btn) {
   if (btn && btn.classList) btn.classList.add('active');
   const el = document.getElementById('inboxCards');
   if (el) el.innerHTML = renderInboxTable(filter);
+}
+
+async function markAllImportedDone() {
+  const imported = APP.formInbox.filter(f=>f.status==='imported');
+  if (!imported.length) { toast('No imported entries to clear','info'); return; }
+  let done = 0;
+  if (APP.scriptUrl) {
+    for (let i = 0; i < imported.length; i++) {
+      const f = imported[i];
+      try {
+        await postToScript({
+          action: 'rejectForm', // reuse rejectForm to just log it — with reason "Imported via CSV"
+          formRowId: f.id,
+          reason: 'Imported via Bulk CSV — Emp: ' + (f.empCode||''),
+          rejectedBy: APP.user?.displayName || 'System'
+        });
+        // Actually mark as approved in log
+        await postToScript({
+          action: 'approveForm',
+          formRowId: f.id,
+          'Enter Employee Code': f.empCode || '',
+          'Employee Type': '',
+          type: '',
+          approvedBy: APP.user?.displayName || 'Bulk Import'
+        });
+      } catch(e) {}
+      done++;
+    }
+  }
+  imported.forEach(f => { f.status = 'approved'; });
+  toast('✅ ' + done + ' entries cleared from pending', 'success');
+  navigateTo('formInbox');
 }
 
 function openApproveModal(formId) {
@@ -2571,31 +2665,56 @@ async function saveKraDocs(code, type) {
 }
 
 // ===================== BULK IMPORT =====================
+const BULK_IMPORT_HEADERS = [
+  'Enter Employee Code','Name',"Father's Name",'Date of Birth','Date of Joining',
+  'Gender','Marital Status','Contact Number','Email','Aadhar card Number',
+  'Pan Number','Bank Name','Bank Account Number','IFSC Code',
+  'Last qualification Certificate','Blood Group',
+  'Emergency Contact Number','Emergency contact person Name','Relation with Employee.',
+  'Is PF Deducted','Is ESIC Deducted',
+  'Employee Type','Department','Designation','Reporting Supervisor'
+];
+
 function renderBulkImport() {
-  return `
-<div class="card mb-4">
-  <div class="card-header"><span class="card-title">⬇️ Download Templates</span></div>
-  <div class="card-body">
-    <p style="font-size:13px;color:var(--text2);margin-bottom:14px;">Download a template, fill in employee data matching the exact column headers, then upload below.</p>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;">
-      <button class="btn btn-secondary" onclick="downloadTemplate()">⬇️ Basic Template (All Fields)</button>
-      <button class="btn btn-secondary" style="border-color:var(--accent);color:var(--accent);" onclick="downloadSalaryTemplate()">💰 Salary Import Template (Harsh Fields)</button>
-    </div>
-    <div style="margin-top:14px;padding:12px;background:var(--accent-lt);border:1.5px solid var(--accent-md);border-radius:8px;font-size:12px;color:var(--accent-dk);">
-      <strong>💡 Salary Template includes:</strong> EPFO No., ESIC No., Basic, HRA, Other, Monthly Gross, ESI Employer (3.25%), PF Employer (13%), Insurance, Bonus, Gratuity, PL, CL, CTC p.m., CTC p.a., ESIC Employee (0.75%), PF Employee (12%), Take Home Salary
-    </div>
-  </div>
-</div>
-<div class="card">
-  <div class="card-header"><span class="card-title">📤 Upload Employees CSV</span></div>
-  <div class="card-body">
-    <div class="form-group">
-      <label>Select CSV File</label>
-      <input type="file" accept=".csv" class="form-control" id="csvFile" onchange="previewCSV(this)"/>
-    </div>
-    <div id="csvPreview"></div>
-  </div>
-</div>`;
+  return '<div class="card mb-4">' +
+    '<div class="card-header"><span class="card-title">⬇️ Download Sample Template</span></div>' +
+    '<div class="card-body">' +
+      '<p style="font-size:13px;color:var(--text2);margin-bottom:14px;">Download the CSV template, fill employee data, then upload below. All departments will be set to <strong>Other</strong> — you can override after import in the employee profile.</p>' +
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;">' +
+        '<button class="btn btn-primary" onclick="downloadBulkTemplate()">⬇️ Download Bulk Import Template</button>' +
+        '<button class="btn btn-secondary" style="border-color:var(--accent);color:var(--accent);" onclick="downloadSalaryTemplate()">💰 Salary Template</button>' +
+      '</div>' +
+      '<div style="margin-top:14px;padding:12px 16px;background:var(--blue-lt);border:1.5px solid rgba(59,111,212,0.25);border-radius:8px;font-size:12px;color:#1e3a6e;">' +
+        '<strong>📋 Template columns:</strong> Employee Code, Name, Father\'s Name, Date of Birth (DD-MM-YYYY), Date of Joining (DD-MM-YYYY), Gender, Marital Status, Contact, Email, Aadhar, PAN, Bank Name, Account No, IFSC, Qualification, Blood Group, Emergency Contact, Emergency Person, Relation, Is PF Deducted, Is ESIC Deducted, <strong>Employee Type (G1/G2/G3)</strong>, Department, Designation, Reporting Supervisor' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+  '<div class="card">' +
+    '<div class="card-header"><span class="card-title">📤 Upload & Import Employees</span>' +
+      '<div style="font-size:12px;color:var(--text3);">CSV file · columns must match template</div>' +
+    '</div>' +
+    '<div class="card-body">' +
+      '<div class="form-group">' +
+        '<label>Select CSV File</label>' +
+        '<input type="file" accept=".csv,.CSV" class="form-control" id="csvFile" onchange="previewCSV(this)"/>' +
+      '</div>' +
+      '<div id="csvPreview"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function downloadBulkTemplate() {
+  const sampleRows = [
+    ['SP001','Praveen Yadav','Mr Mahendra Kumar','04-04-2000','06-06-2022','Male','Single','9651111333','praveen@gmail.com','3596 2221 0260','BBJPY9872K','INDIAN BANK','50451700472','IDIB000I544','B.Tech','A+','7607064571','Prabhat Yadav','Brother','Yes','No','G1','Other','MIS Executive','Director'],
+    ['SP002','Sample Employee 2','Father Name','15-08-1995','01-01-2023','Female','Married','9800000000','sample@gmail.com','1234 5678 9012','ABCDE1234F','HDFC Bank','12345678901','HDFC0001234','MBA','B+','9900000000','Emergency Person','Father','Yes','Yes','G2','Other','HR Executive','Harsh Kumar'],
+  ];
+  let csv = BULK_IMPORT_HEADERS.join(',') + '\n';
+  sampleRows.forEach(r => { csv += r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',') + '\n'; });
+  const link = document.createElement('a');
+  link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  link.download = 'bulk_import_template.csv';
+  link.click();
+  toast('Template downloaded','success');
 }
 
 function downloadSalaryTemplate() {
@@ -2610,54 +2729,177 @@ function downloadSalaryTemplate() {
     'Take Home Salary',
     'Is PF Deducted','Is ESIC Deducted','Has Insurance','Has Bonus','Has Gratuity','Has EL','Has CL'
   ];
-  // Sample row
-  const sampleRow = ['G1-001','Sample Employee','G1','EPFO123','ESIC456',
-    '25000','10000','2000','37000',
-    '1202','3250','500','2082','1202','481','224',
-    '45941','551294',
-    '277','3000','33723',
-    'Yes','Yes','Yes','Yes','Yes','Yes','Yes'
+  const sampleRow = ['SP001','Sample Employee','G1','EPFO123','ESIC456',
+    '25000','10000','2000','37000','1202','3250','500','2082','1202','481','224',
+    '45941','551294','277','3000','33723','Yes','Yes','Yes','Yes','Yes','Yes','Yes'
   ];
-  const csv = 'data:text/csv;charset=utf-8,' + salaryHeaders.join(',') + '\n' + sampleRow.join(',') + '\n';
+  let csv = salaryHeaders.join(',') + '\n' + sampleRow.map(v=>'"'+v+'"').join(',') + '\n';
   const link = document.createElement('a');
-  link.href = encodeURI(csv);
+  link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
   link.download = 'salary_import_template.csv';
   link.click();
   toast('Salary template downloaded','success');
 }
 
 function downloadTemplate() {
-  const csv='data:text/csv;charset=utf-8,'+SHEET_HEADERS.join(',')+'\n';
-  const link=document.createElement('a'); link.href=encodeURI(csv); link.download='hr_central_template.csv'; link.click();
-  toast('Template downloaded','success');
+  const csv = SHEET_HEADERS.join(',') + '\n';
+  const link = document.createElement('a');
+  link.href = 'data:text/csv;charset=utf-8,' + encodeURIComponent(csv);
+  link.download = 'hr_central_full_template.csv';
+  link.click();
+  toast('Full template downloaded','success');
 }
+
+function parseCSVLine(line) {
+  const result = [], re = /("(?:[^"]|"")*"|[^,]*),?/g;
+  let m;
+  while ((m = re.exec(line)) !== null) {
+    if (m.index === re.lastIndex) { re.lastIndex++; break; }
+    let val = m[1];
+    if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1,-1).replace(/""/g,'"');
+    result.push(val.trim());
+  }
+  return result;
+}
+
 function previewCSV(input) {
-  const file=input.files[0]; if (!file) return;
-  const reader=new FileReader();
-  reader.onload=(e)=>{
-    const lines=e.target.result.split('\n').filter(Boolean);
-    const headers=lines[0].split(',');
-    const rows=lines.slice(1,6).map(l=>l.split(','));
-    let html=`<div style="margin-top:16px;"><p style="margin-bottom:10px;font-size:13px;color:var(--text2);"><strong>${lines.length-1}</strong> rows detected</p>`;
-    html+=`<div class="table-wrap card"><table><thead><tr>${headers.slice(0,8).map(h=>`<th>${h}</th>`).join('')}<th>…</th></tr></thead>`;
-    html+=`<tbody>${rows.map(r=>`<tr>${r.slice(0,8).map(c=>`<td>${c}</td>`).join('')}<td>…</td></tr>`).join('')}</tbody></table></div>`;
-    html+=`<button class="btn btn-success" style="margin-top:12px;" onclick="importCSV()">✅ Confirm Import (${lines.length-1} employees)</button></div>`;
-    document.getElementById('csvPreview').innerHTML=html;
-    APP._csvData={headers,rows:lines.slice(1).map(l=>l.split(',').reduce((a,v,i)=>({...a,[headers[i]]:v}),{}))};
+  const file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { toast('CSV must have at least one data row','error'); return; }
+    const headers = parseCSVLine(lines[0]);
+    const dataRows = lines.slice(1).map(l => parseCSVLine(l));
+
+    // Map to objects
+    const objects = dataRows.map(function(row) {
+      const obj = {};
+      headers.forEach(function(h, i) { obj[h] = row[i] || ''; });
+      return obj;
+    }).filter(function(o) { return o['Name'] || o['Enter Employee Code']; });
+
+    // Preview table — show first 5 rows with key columns
+    const previewCols = ['Enter Employee Code','Name','Date of Birth','Date of Joining','Employee Type','Department','Designation'];
+    const visibleCols = previewCols.filter(c => headers.includes(c));
+    let html = '<div style="margin-top:16px;">';
+    html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">';
+    html += '<span style="font-size:13px;color:var(--text2);"><strong>' + objects.length + '</strong> employees detected</span>';
+    html += '<span style="font-size:12px;color:var(--text3);">' + headers.length + ' columns</span>';
+
+    // Count by type
+    const byType = {G1:0, G2:0, G3:0, unknown:0};
+    objects.forEach(function(o) {
+      const t = o['Employee Type'];
+      if (t==='G1') byType.G1++; else if (t==='G2') byType.G2++; else if (t==='G3') byType.G3++; else byType.unknown++;
+    });
+    if (byType.G1) html += '<span class="badge badge-green">G1: '+byType.G1+'</span>';
+    if (byType.G2) html += '<span class="badge badge-yellow">G2: '+byType.G2+'</span>';
+    if (byType.G3) html += '<span class="badge badge-purple">G3: '+byType.G3+'</span>';
+    if (byType.unknown) html += '<span class="badge badge-red">⚠️ No Type: '+byType.unknown+'</span>';
+    html += '</div>';
+
+    html += '<div class="table-wrap card" style="margin-bottom:12px;"><table><thead><tr>' +
+      visibleCols.map(function(c){ return '<th style="font-size:11px;">'+c+'</th>'; }).join('') +
+      '<th style="font-size:11px;">…</th>' +
+      '</tr></thead><tbody>' +
+      objects.slice(0,8).map(function(o){
+        return '<tr>' + visibleCols.map(function(c){
+          let v = o[c]||'—';
+          if (c==='Date of Birth'||c==='Date of Joining') v = fmtDate(v);
+          if (c==='Employee Type') return '<td><span class="badge '+(v==='G1'?'badge-green':v==='G2'?'badge-yellow':'badge-purple')+'">'+v+'</span></td>';
+          return '<td style="font-size:12px;">'+v+'</td>';
+        }).join('') + '<td style="color:var(--text4);">…</td></tr>';
+      }).join('') +
+      '</tbody></table></div>';
+
+    if (objects.length > 8) html += '<p style="font-size:12px;color:var(--text3);margin-bottom:10px;">Showing first 8 of '+objects.length+' rows</p>';
+
+    if (byType.unknown > 0) {
+      html += '<div style="background:var(--yellow-lt);border:1.5px solid rgba(196,134,10,0.3);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--yellow);margin-bottom:12px;">⚠️ '+byType.unknown+' rows have no Employee Type (G1/G2/G3) — they will be skipped. Fix the CSV and re-upload.</div>';
+    }
+
+    html += '<button class="btn btn-success" style="margin-top:4px;" onclick="importCSV()">✅ Import All ' + objects.length + ' Employees</button></div>';
+    document.getElementById('csvPreview').innerHTML = html;
+    APP._csvData = { headers, rows: objects };
   };
   reader.readAsText(file);
 }
+
 async function importCSV() {
   if (!APP._csvData) return;
-  let success=0,fail=0;
-  APP._csvData.rows.forEach(row=>{
-    const type=row['Employee Type'];
-    if (!type||!['G1','G2','G3'].includes(type)) { fail++; return; }
-    const sheet=type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
-    sheet.push({...row,"Sl No":sheet.length+1}); success++;
+  let success = 0, fail = 0, failReasons = [];
+  const today = (function(){ const n=new Date(); return String(n.getDate()).padStart(2,'0')+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+n.getFullYear(); })();
+
+  APP._csvData.rows.forEach(function(row) {
+    // Accept both BULK_IMPORT_HEADERS format and SHEET_HEADERS format
+    const type = row['Employee Type'] || row['type'] || '';
+    if (!type || !['G1','G2','G3'].includes(type)) { fail++; failReasons.push((row['Name']||'?')+': missing Employee Type'); return; }
+    if (!row['Name'] && !row['Enter Employee Code']) { fail++; return; }
+
+    const sheet = type==='G1'?APP.g1:type==='G2'?APP.g2:APP.g3;
+    const code = row['Enter Employee Code'] || '';
+
+    // Normalise dates
+    const dob = fmtDate(row['Date of Birth'] || row['DOB(As per Adhar)'] || '');
+    const doj = fmtDate(row['Date of Joining'] || row['Date Of Joining'] || '');
+    const age = dob && /^\d{2}-\d{2}-\d{4}$/.test(dob) ? calcAge(dob) : '';
+
+    // Build employee record merging both template formats
+    const emp = {
+      "Sl No": sheet.length + 1,
+      "Enter Employee Code": code,
+      "Name": row['Name'] || '',
+      "Father/Husband Name": row["Father's Name"] || row['Father/Husband Name'] || '',
+      "Employee Type": type,
+      "DOB(As per Adhar)": dob,
+      "Date Of Joining": doj,
+      "Age": age,
+      "Gender": row['Gender'] || '',
+      "Marital Status": row['Marital Status'] || '',
+      "Contact Number": row['Contact Number'] || '',
+      "E-mail ID (Personal)": row['Email'] || row['E-mail ID (Personal)'] || '',
+      "Aadhar": row['Aadhar card Number'] || row['Aadhar'] || '',
+      "PAN": row['Pan Number'] || row['PAN'] || '',
+      "Bank Name": row['Bank Name'] || '',
+      "Bank Account No.": row['Bank Account Number'] || row['Bank Account No.'] || '',
+      "IFSC CODE": row['IFSC Code'] || row['IFSC CODE'] || '',
+      "Qualification": row['Last qualification Certificate'] || row['Qualification'] || '',
+      "Department": row['Department'] || 'Other',
+      "Designation": row['Designation'] || '',
+      "Reporting Supervisor": row['Reporting Supervisor'] || '',
+      "Is PF Deducted": row['Is PF Deducted'] || '',
+      "Is ESIC Deducted": row['Is ESIC Deducted'] || '',
+      "Status": row['Status'] || 'Active',
+      "Source": "Bulk Import",
+      "ApprovedBy": APP.user?.displayName || '',
+      "CreatedAt": today
+    };
+    // Copy any extra salary/doc fields that exist in the row
+    SHEET_HEADERS.forEach(function(h) { if (row[h] !== undefined && row[h] !== '' && !emp[h]) emp[h] = row[h]; });
+    sheet.push(emp);
+    success++;
   });
-  if (APP.scriptUrl) { try { await postToScript({action:'bulkImport',employees:APP._csvData.rows}); } catch(e) {} }
-  toast(`Import: ${success} success, ${fail} failed`,success>0?'success':'error');
+
+  if (APP.scriptUrl) {
+    try { await postToScript({action:'bulkImport', employees: APP._csvData.rows.slice(0, success)}); } catch(e) {}
+  }
+
+  const msg = '✅ Imported: ' + success + (fail > 0 ? '  ❌ Skipped: '+fail : '');
+  toast(msg, success > 0 ? 'success' : 'error');
+
+  if (success > 0) {
+    document.getElementById('csvPreview').innerHTML =
+      '<div style="padding:20px;text-align:center;background:var(--green-lt);border-radius:10px;margin-top:12px;">' +
+        '<div style="font-size:28px;margin-bottom:8px;">✅</div>' +
+        '<div style="font-size:16px;font-weight:700;color:var(--green);">' + success + ' employees imported successfully</div>' +
+        (fail > 0 ? '<div style="font-size:12px;color:var(--red);margin-top:6px;">'+fail+' rows skipped (missing Employee Type)</div>' : '') +
+        '<div style="margin-top:14px;display:flex;gap:10px;justify-content:center;">' +
+          '<button class="btn btn-primary" onclick="navigateTo(\'masterDB\')">View Employees →</button>' +
+          '<button class="btn btn-secondary" onclick="document.getElementById(\'csvFile\').value=\'\';document.getElementById(\'csvPreview\').innerHTML=\'\'">Import More</button>' +
+        '</div>' +
+      '</div>';
+  }
 }
 
 // ===================== REPORTS =====================
